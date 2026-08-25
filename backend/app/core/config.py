@@ -38,6 +38,47 @@ class Settings(BaseSettings):
     #: BrasilAPI — espelho gratuito dos Dados Abertos do CNPJ. Só CNPJ.
     BRASIL_API_BASE_URL: str = "https://brasilapi.com.br"
 
+    #: Evolution API (WhatsApp) — self-hosted, instância própria por cliente,
+    #: serviço compartilhado entre clientes.
+    EVOLUTION_URL: str = ""
+    EVOLUTION_KEY: str = ""
+    EVOLUTION_INSTANCE: str = ""
+    #: Firecrawl — scrape de site em markdown.
+    FIRECRAWL_API_KEY: str = ""
+    #: Hunter.io — descoberta de e-mail do decisor.
+    HUNTER_API_KEY: str = ""
+    #: ⚠️ DOBRA o consumo de crédito do Hunter (§5). Só ligar depois de
+    #: confirmar o plano contratado.
+    HUNTER_DOMAIN_SEARCH_FALLBACK: bool = False
+    #: ZeroBounce — validação de entregabilidade.
+    ZEROBOUNCE_API_KEY: str = ""
+    #: Anthropic — leitura do site por IA (presenca_digital).
+    ANTHROPIC_API_KEY: str = ""
+    ANTHROPIC_MODEL: str = "claude-haiku-4-5-20251001"
+
+    @property
+    def evolution_configurada(self) -> bool:
+        return all(
+            (self.EVOLUTION_URL.strip(), self.EVOLUTION_KEY.strip(),
+             self.EVOLUTION_INSTANCE.strip())
+        )
+
+    @property
+    def firecrawl_configurada(self) -> bool:
+        return bool(self.FIRECRAWL_API_KEY.strip())
+
+    @property
+    def hunter_configurada(self) -> bool:
+        return bool(self.HUNTER_API_KEY.strip())
+
+    @property
+    def zerobounce_configurada(self) -> bool:
+        return bool(self.ZEROBOUNCE_API_KEY.strip())
+
+    @property
+    def anthropic_configurada(self) -> bool:
+        return bool(self.ANTHROPIC_API_KEY.strip())
+
     @property
     def api_full_configurada(self) -> bool:
         return bool(self.API_FULL_TOKEN.strip())

@@ -189,27 +189,94 @@ def executar_busca_mensal(
 def enriquecer_selecionados(
     selecionados: Sequence[Candidato],
     *,
-    cliente_api_full=None,
-    cliente_brasil_api=None,
+    apenas_decisor: bool = False,
+    **clientes,
 ) -> list:
-    """Enriquecimento pago dos selecionados — hoje **só o decisor**.
+    """Enriquecimento pago dos selecionados — pipeline completo.
 
-    Delega pra ``app.workers.enriquecimento``, onde mora a lógica e a
-    documentação de custo. Aqui fica só o ponto de entrada que a orquestração
-    referencia, pra quem lê ``busca.py`` achar a fronteira sem procurar.
+    Delega pra ``app.workers.enriquecimento``, onde mora a lógica, a ordem
+    das etapas e a documentação de custo. Aqui fica só o ponto de entrada
+    que a orquestração referencia.
 
-    ⚠️ **Custa dinheiro**: uma chamada por candidato, e ~97% deles são CPF,
-    que vai pra fonte paga (API Full). Só é chamada DEPOIS da pré-seleção ter
+    ⚠️ **Custa dinheiro em toda chamada**, e por lead: decisor (API Full pra
+    CPF, ~97% do lote), WhatsApp (Evolution), e-mail (Hunter + ZeroBounce) e
+    IA (Anthropic) quando houver site. Só roda DEPOIS da pré-seleção ter
     cortado o volume — nunca antes.
 
-    As demais etapas pagas da §3 (Google Places, Firecrawl, WhatsApp, e-mail,
-    presença digital) continuam fora desta fase; ver os TODO em
-    ``app.workers.enriquecimento.enriquecer_decisor``.
+    ``apenas_decisor=True`` mantém o comportamento da Fase 5 (só a etapa de
+    decisor), útil pra rodar o lote mais barato enquanto as demais chaves
+    não estão contratadas.
     """
-    from app.workers.enriquecimento import enriquecer_lote
+    from app.workers.enriquecimento import enriquecer_lote, enriquecer_lote_completo
 
-    return enriquecer_lote(
-        selecionados,
-        cliente_api_full=cliente_api_full,
-        cliente_brasil_api=cliente_brasil_api,
-    )
+    if apenas_decisor:
+        return enriquecer_lote(
+            selecionados,
+            cliente_api_full=clientes.get("cliente_api_full"),
+            cliente_brasil_api=clientes.get("cliente_brasil_api"),
+        )
+    return enriquecer_lote_completo(selecionados, **clientes)
+
+
+def persistir_leads(sessao, enriquecidos: Sequence) -> int:
+    """Grava os leads enriquecidos, com score e prioridade preenchidos.
+
+    Upsert por ``documento`` — a chave de negócio, e o índice único da Fase
+    1. Um lead que já existe é atualizado, não duplicado.
+
+    Devolve quantos leads foram gravados ou atualizados. Nunca levanta por
+    lead individual: um documento inválido é pulado com log, não derruba a
+    persistência dos outros (§6).
+    """
+    from app.models import Lead
+
+    gravados = 0
+    for enriquecido in enriquecidos:
+        candidato = enriquecido.candidato
+        try:
+            lead = (
+                sessao.query(Lead)
+                .filter(Lead.documento == candidato.documento)
+                .one_or_none()
+            )
+            dados_nicho = dict(candidato.dados_nicho)
+            dados_nicho.update(
+                {
+                    "instagram": enriquecido.instagram or None,
+                    "site_url": enriquecido.site_url or None,
+                    "whatsapp_ativo": enriquecido.tem_whatsapp,
+                    "email_status": enriquecido.email_status or None,
+                    "presenca_digital": enriquecido.presenca_digital,
+                    "fonte_decisor": enriquecido.fonte_decisor or None,
+                    "decisor": enriquecido.decisor or None,
+                }
+            )
+            campos = {
+                "nome": enriquecido.nome or candidato.nome or candidato.documento,
+                "municipio": candidato.municipio,
+                "uf": candidato.uf,
+                "telefone": enriquecido.whatsapp_numero
+                or (enriquecido.telefones[0] if enriquecido.telefones else None),
+                "email": enriquecido.emails[0] if enriquecido.emails else None,
+                "site": enriquecido.site_url or None,
+                "score": enriquecido.score,
+                "prioridade": enriquecido.prioridade,
+                "etapas_puladas": list(enriquecido.etapas_puladas),
+                "dados_nicho": dados_nicho,
+            }
+            if lead is None:
+                sessao.add(Lead(documento=candidato.documento, **campos))
+            else:
+                for chave, valor in campos.items():
+                    setattr(lead, chave, valor)
+            gravados += 1
+        except Exception as exc:  # noqa: BLE001 — isolamento por lead
+            from app.core.segredos import erro_redigido
+
+            logger.error(
+                "falha persistindo lead %s — seguindo com os demais: %s",
+                candidato.documento, erro_redigido(exc),
+            )
+    sessao.commit()
+    logger.info("busca: %d leads persistidos com score e prioridade", gravados)
+    return gravados

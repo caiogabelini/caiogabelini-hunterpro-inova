@@ -38,6 +38,21 @@ from typing import TextIO
 SENTINELAS_VAZIO: tuple[str, ...] = ("", "-1")
 
 
+class ArquivoZipInvalidoError(ValueError):
+    """O ``.zip`` não tem os membros que o formato esperava.
+
+    Herda de ``ValueError`` pra continuar sendo pego por quem captura exceção
+    genérica (todo parser daqui embrulha a leitura), mas com tipo próprio pra
+    quem quiser tratar especificamente.
+
+    Levantar aqui é deliberado, e é a exceção à regra de "nunca lança": um
+    ``.zip`` com número de membros diferente do esperado significa que alguém
+    montou o arquivo à mão. Adivinhar qual membro usar processaria **os dados
+    errados em silêncio** — pior que falhar alto. Os arquivos de dados abertos
+    da Receita vêm sempre com exatamente um membro por ``.zip``.
+    """
+
+
 def encontrar_arquivo(
     diretorio: Path, *padroes: str, extensoes: Sequence[str] = (".gz", ".zip", ".csv")
 ) -> Path | None:
@@ -63,6 +78,48 @@ def encontrar_arquivo(
     return None
 
 
+def encontrar_arquivos(
+    diretorio: Path, *, marcador_csv: str, prefixo_zip: str
+) -> list[Path]:
+    """Acha **todos** os arquivos de um tipo de dado da Receita numa pasta.
+
+    Plural de propósito, e por dois motivos distintos:
+
+    1. **A Receita fatia o arquivo completo em 10** (``Estabelecimentos0.zip``
+       .. ``Estabelecimentos9.zip``). Cada CNPJ cai numa fatia por hash; o
+       layout é idêntico. Pegar só uma dá 1/10 do país, sem sinal nenhum de
+       que faltou coisa.
+    2. **Os dois formatos convivem**: o ``.zip`` baixado do site e o CSV já
+       extraído (``K3241.K03200Y1.D60808.ESTABELE``). O marcador do CSV é
+       MAIÚSCULO e o nome do zip é Capitalizado — foi exatamente aí que o
+       glob case-sensitive do Minotto ignorou os ``.zip`` em silêncio, e quem
+       esquecesse de descompactar via a busca "concluir com sucesso" com zero
+       leads (seção 6 do docs_fundacao.md). A comparação aqui ignora caixa.
+
+    ⚠️ Se a pasta tiver os dois formatos do mesmo dado, **os dois voltam** na
+    lista. Deduplicar é responsabilidade de quem consome (por CNPJ, não por
+    nome de arquivo): correlacionar ``Estabelecimentos1.zip`` com
+    ``K3241.K03200Y1.D60808.ESTABELE`` pelo nome não é confiável, e eleger um
+    formato "vencedor" descartaria fatias de quem extraiu só parte dos zips.
+
+    Difere de ``encontrar_arquivo`` (singular), que serve fonte publicada em
+    arquivo único — o caso do Sicor.
+    """
+    if not diretorio.is_dir():
+        return []
+    marcador, prefixo = marcador_csv.lower(), prefixo_zip.lower()
+    encontrados = []
+    for caminho in diretorio.iterdir():
+        if not caminho.is_file():
+            continue
+        nome = caminho.name.lower()
+        eh_csv_extraido = marcador in nome and not nome.endswith(".zip")
+        eh_zip_da_receita = nome.startswith(prefixo) and nome.endswith(".zip")
+        if eh_csv_extraido or eh_zip_da_receita:
+            encontrados.append(caminho)
+    return sorted(encontrados)
+
+
 @contextmanager
 def abrir_texto(caminho: Path, *, encoding: str = "latin-1") -> Iterator[TextIO]:
     """Abre ``.gz``, ``.zip`` ou texto puro como stream de texto.
@@ -77,9 +134,14 @@ def abrir_texto(caminho: Path, *, encoding: str = "latin-1") -> Iterator[TextIO]
             yield f
     elif sufixo == ".zip":
         with zipfile.ZipFile(caminho) as z:
-            membros = [m for m in z.namelist() if not m.endswith("/")]
-            if not membros:
-                raise ValueError(f"zip sem membros: {caminho}")
+            membros = [m for m in z.infolist() if not m.is_dir()]
+            if len(membros) != 1:
+                nomes = [m.filename for m in membros]
+                raise ArquivoZipInvalidoError(
+                    f"{caminho.name} tem {len(membros)} arquivos dentro "
+                    f"(esperado exatamente 1): {nomes}. Extraia o que você quer "
+                    f"usar e coloque o CSV direto na pasta."
+                )
             with z.open(membros[0]) as bruto:
                 yield io.TextIOWrapper(bruto, encoding=encoding, newline="")
     else:
@@ -117,6 +179,37 @@ def leitor_csv(
             yield [], iter(())
             return
         yield cabecalho, leitor
+
+
+@contextmanager
+def leitor_csv_posicional(
+    caminho: Path,
+    colunas: Sequence[str],
+    *,
+    delimitador: str = ";",
+    encoding: str = "latin-1",
+    quotechar: str = '"',
+) -> Iterator[Iterator[dict[str, str]]]:
+    """Lê arquivo **SEM cabeçalho**, nomeando as colunas por posição.
+
+    É o formato dos dados abertos da Receita Federal: sem linha de cabeçalho,
+    ``;`` como separador, campos entre aspas duplas, latin-1. O nome de cada
+    coluna vem de ``colunas``, na ordem exata do layout oficial.
+
+    Linha com menos colunas que o layout é **pulada** em vez de derrubar o
+    parser — arquivo truncado não pode custar as outras milhões de linhas.
+    """
+    with abrir_texto(caminho, encoding=encoding) as f:
+        leitor = csv.reader(f, delimiter=delimitador, quotechar=quotechar)
+        esperado = len(colunas)
+
+        def linhas() -> Iterator[dict[str, str]]:
+            for row in leitor:
+                if len(row) < esperado:
+                    continue
+                yield {c: (v or "").strip().strip('"').strip() for c, v in zip(colunas, row)}
+
+        yield linhas()
 
 
 def indices_de(cabecalho: Sequence[str], *colunas: str) -> tuple[int, ...]:

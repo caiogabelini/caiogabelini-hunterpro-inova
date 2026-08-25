@@ -40,6 +40,18 @@ ARQUIVOS_SICOR = (
 )
 
 
+#: Arquivos reais de Dados Abertos do CNPJ. Moram no projeto irmão (Minotto)
+#: e são lidos por caminho, **sem cópia** — são centenas de MB. O projeto
+#: irmão é read-only nesta sessão.
+DIR_RFB = Path("/home/caiogabelini/hunterpro-minotto/backend/data/receita_federal")
+
+ARQUIVOS_RFB = ("Estabelecimentos1.zip", "Empresas1.zip", "Municipios.zip")
+
+
+def rfb_disponivel() -> bool:
+    return all((DIR_RFB / nome).is_file() for nome in ARQUIVOS_RFB)
+
+
 def sicor_disponivel() -> bool:
     return all((DIR_SICOR / nome).is_file() for nome in ARQUIVOS_SICOR)
 
@@ -48,6 +60,16 @@ def sicor_disponivel() -> bool:
 exige_arquivos_sicor = pytest.mark.skipif(
     not sicor_disponivel(),
     reason=f"arquivos reais do Sicor ausentes em {DIR_SICOR} (não são versionados)",
+)
+
+
+#: Marcador pros testes que exigem os arquivos reais da Receita Federal.
+exige_arquivos_rfb = pytest.mark.skipif(
+    not rfb_disponivel(),
+    reason=(
+        f"arquivos reais de Dados Abertos do CNPJ ausentes em {DIR_RFB} "
+        f"(ficam no projeto irmão, não são versionados)"
+    ),
 )
 
 

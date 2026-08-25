@@ -1,0 +1,404 @@
+"""Sicor (Sistema de Operações do Crédito Rural — Banco Central).
+
+Fonte gratuita e específica do nicho da Inova (agronegócio/grãos, foco Paraná).
+Substitui o par PGFN+CNES que o Minotto usava. É arquivo em lote, não API:
+o padrão de ``services/`` vale, menos o "cliente HTTP injetável" (não há
+cliente HTTP — é leitura de arquivo local, baixado fora daqui).
+
+O que **permanece** do padrão: dataclass de resultado tipado, nunca levantar
+exceção pro chamador (falha vira resultado vazio com motivo), e leitura
+sempre em streaming via ``arquivo_utils``.
+
+## As três tabelas e por que a ponte é essa
+
+```
+SICOR_OPERACAO_BASICA_ESTADO_{ano}.gz   1.313.316 linhas / 47 colunas
+   │  PK: REF_BACEN + NU_ORDEM
+   │  Tem CD_ESTADO (o filtro de UF), VL_AREA_INFORMADA (a área!),
+   │  VL_PARC_CREDITO (valor financiado) e CD_EMPREENDIMENTO.
+   │  NÃO tem CPF/CNPJ — cobre crédito público E privado, e o privado
+   │  é anônimo por sigilo bancário.
+   │
+   ├── CD_EMPREENDIMENTO ──> Empreendimento.csv  (domínio, 3.299 linhas)
+   │                          dá PRODUTO (a cultura: SOJA, MILHO...)
+   │                          ⚠️ liga por CD_EMPREENDIMENTO, NÃO por REF_BACEN
+   │
+   ├── REF_BACEN ──────────> SICOR_MUTUARIOS.gz    18.362.042 linhas
+   │                          dá CD_CPF_CNPJ (a identificação do lead)
+   │                          ⚠️ a chave aqui é só REF_BACEN, sem NU_ORDEM
+   │
+   └── REF_BACEN + NU_ORDEM > SICOR_PROPRIEDADES.gz 27.502.205 linhas
+                              dá CD_CAR (bônus pro dossiê)
+```
+
+## ⚠️ 70% das operações não têm mutuário — e isso NÃO é erro
+
+Medido contra o arquivo real (PR, faixa 150–1.400 ha, ano 2026): de 1.856
+REF_BACEN no alvo, só **552 (29,7%)** aparecem em ``SICOR_MUTUARIOS``.
+
+Os outros 70% **não são falha de leitura, não são dado corrompido e não são
+bug**: são operações de **crédito rural privado**, que o Bacen publica na
+tabela de operação (valor, área, cultura, estado) mas cujo mutuário não é
+identificado, por sigilo bancário. ``SICOR_MUTUARIOS`` só cobre o universo
+de crédito rural **público** (Proagro ou fonte de recurso pública).
+
+Consequência prática: um REF_BACEN sem mutuário **não pode** virar exceção,
+nem log de erro, nem `etapa_pulada`. É resultado normal do domínio, contado
+em ``ResultadoSicor.refs_sem_mutuario`` pra ficar visível sem virar ruído.
+Se esse número um dia cair pra perto de zero, aí sim é sinal de bug — não o
+contrário.
+
+## Sobre o ano dos arquivos
+
+O ano é parâmetro, nunca hardcode. A assinatura já recebe ``anos`` como
+**lista**, mas esta versão processa **um ano só** — multi-ano é decisão de
+Fase 4, não de parser.
+
+⚠️ Buscar produtor "ativo" quase certamente exige mais de um ano: quem tomou
+crédito em 2025 e não tomou em 2026 continua sendo produtor ativo e lead
+válido. Só que "juntar 2025 e 2026" levanta perguntas que ainda não têm
+resposta acordada — se o mesmo CPF aparece nos dois anos, a área vale a mais
+recente ou a maior? o valor financiado soma ou pega o último? um CPF só de
+2024 ainda entra? Por isso a lista existe na assinatura (pra não haver
+redesenho) e o comportamento multi-ano não existe no corpo.
+"""
+
+from __future__ import annotations
+
+import logging
+from collections.abc import Collection, Sequence
+from dataclasses import dataclass, field
+from pathlib import Path
+
+from app.services.arquivo_utils import (
+    decimal_ou_none,
+    encontrar_arquivo,
+    indices_de,
+    leitor_csv,
+    texto_ou_none,
+)
+
+logger = logging.getLogger(__name__)
+
+#: Faixa de área que interessa à Inova (hectares). Veio da Carolina como
+#: intervalo; a régua de pontuação DENTRO dela segue pendente (ver o
+#: TODO(Carolina) em app/scoring/compute_lead_score.py).
+AREA_MIN_HA_PADRAO = 150.0
+AREA_MAX_HA_PADRAO = 1400.0
+
+#: Nome-base dos arquivos. `encontrar_arquivo` ignora caixa e testa extensões,
+#: mas o padrão em si vem daqui pra ficar num lugar só.
+ARQ_OPERACAO = "SICOR_OPERACAO_BASICA_ESTADO_{ano}"
+ARQ_MUTUARIOS = "SICOR_MUTUARIOS"
+ARQ_PROPRIEDADES = "SICOR_PROPRIEDADES"
+ARQ_EMPREENDIMENTO = "Empreendimento.csv"
+
+
+@dataclass(frozen=True, slots=True)
+class LeadSicor:
+    """Um produtor identificado no Sicor, pronto pra virar ``Lead``.
+
+    ``documento`` já vem só com dígitos e com zero à esquerda preservado —
+    compatível direto com ``app.core.documentos`` sem normalização extra
+    (confirmado contra o arquivo real).
+    """
+
+    ref_bacen: str
+    documento: str
+    tipo_beneficiario: str | None
+    area_ha: float | None
+    valor_financiado: float | None
+    culturas: tuple[str, ...]
+    codigos_car: tuple[str, ...]
+    n_operacoes: int
+    #: Documento dos demais mutuários da operação (avalista, cônjuge, sócio).
+    #: O lead é sempre o mutuário principal (CD_PRIMEIRO='S').
+    coobrigados: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class ResultadoSicor:
+    """Resultado tipado da extração. Nunca vem de uma exceção vazando."""
+
+    leads: tuple[LeadSicor, ...] = ()
+    operacoes_lidas: int = 0
+    refs_no_alvo: int = 0
+    refs_identificados: int = 0
+    #: Esperado ~70%. NÃO é erro — ver o docstring do módulo.
+    refs_sem_mutuario: int = 0
+    #: Etapas puladas com motivo, no mesmo formato de ``Lead.etapas_puladas``.
+    etapas_puladas: tuple[dict[str, str], ...] = field(default_factory=tuple)
+
+    @property
+    def ok(self) -> bool:
+        return bool(self.leads)
+
+
+def _pular(motivo: str, etapa: str) -> dict[str, str]:
+    logger.warning("sicor: etapa '%s' pulada — %s", etapa, motivo)
+    return {"etapa": etapa, "motivo": motivo}
+
+
+def carregar_culturas(caminho: Path) -> dict[str, str]:
+    """``CD_EMPREENDIMENTO`` → ``PRODUTO``. Cabe em memória (3.299 linhas).
+
+    ⚠️ A coluna-chave no arquivo real chama ``CODIGO`` (após tirar o ``#``),
+    **não** ``CD_EMPREENDIMENTO`` como o manual do Bacen documenta. O manual
+    está desatualizado; o arquivo manda.
+    """
+    with leitor_csv(caminho) as (cabecalho, linhas):
+        i_cod, i_produto = indices_de(cabecalho, "CODIGO", "PRODUTO")
+        return {
+            linha[i_cod].strip(): linha[i_produto].strip()
+            for linha in linhas
+            if len(linha) > max(i_cod, i_produto)
+        }
+
+
+def extrair_leads_sicor(
+    diretorio: Path | str,
+    *,
+    uf: str,
+    anos: Sequence[int],
+    area_min_ha: float = AREA_MIN_HA_PADRAO,
+    area_max_ha: float = AREA_MAX_HA_PADRAO,
+    culturas_alvo: Collection[str] | None = None,
+    incluir_car: bool = True,
+) -> ResultadoSicor:
+    """Extrai produtores identificáveis do Sicor pra uma UF e uma faixa de área.
+
+    Nunca levanta: qualquer falha vira ``ResultadoSicor`` com ``etapas_puladas``
+    preenchido e ``leads`` vazio. É o mesmo princípio do ``_rodar_etapa`` do
+    pipeline — uma fonte que falhou não pode derrubar a busca inteira.
+
+    ``anos`` é uma sequência por decisão de design (ver docstring do módulo),
+    mas esta versão processa só o primeiro; os demais viram etapa pulada com
+    motivo explícito, nunca silêncio.
+    """
+    diretorio = Path(diretorio)
+    puladas: list[dict[str, str]] = []
+
+    if not anos:
+        return ResultadoSicor(
+            etapas_puladas=(_pular("nenhum ano informado", "sicor_operacao"),)
+        )
+    ano = anos[0]
+    if len(anos) > 1:
+        puladas.append(
+            _pular(
+                f"multi-ano ainda não implementado (Fase 4): processado só {ano}, "
+                f"ignorados {list(anos[1:])}",
+                "sicor_multi_ano",
+            )
+        )
+
+    arq_operacao = encontrar_arquivo(diretorio, ARQ_OPERACAO.format(ano=ano))
+    if arq_operacao is None:
+        return ResultadoSicor(
+            etapas_puladas=(
+                *puladas,
+                _pular(
+                    f"arquivo de operação do ano {ano} não encontrado em {diretorio}",
+                    "sicor_operacao",
+                ),
+            )
+        )
+
+    # --- Cultura: tabela de domínio, pequena, carregada inteira ------------
+    culturas_por_codigo: dict[str, str] = {}
+    arq_empreendimento = encontrar_arquivo(diretorio, ARQ_EMPREENDIMENTO)
+    if arq_empreendimento is None:
+        puladas.append(
+            _pular(
+                "Empreendimento.csv ausente — leads saem sem cultura",
+                "sicor_cultura",
+            )
+        )
+    else:
+        try:
+            culturas_por_codigo = carregar_culturas(arq_empreendimento)
+        except (OSError, KeyError, ValueError) as exc:
+            puladas.append(_pular(f"falha ao ler culturas: {exc}", "sicor_cultura"))
+
+    alvo_normalizado = (
+        {c.strip().upper() for c in culturas_alvo} if culturas_alvo else None
+    )
+
+    # --- Passo 1: operação (streaming) — monta o set de REF_BACEN alvo -----
+    # Só o que interessa fica em memória. O arquivo tem 1,3 milhão de linhas;
+    # o alvo tipicamente tem alguns milhares.
+    area_por_ref: dict[str, float] = {}
+    valor_por_ref: dict[str, float] = {}
+    culturas_por_ref: dict[str, set[str]] = {}
+    ops_por_ref: dict[str, int] = {}
+    operacoes_lidas = 0
+    uf_alvo = uf.strip().upper()
+
+    try:
+        with leitor_csv(arq_operacao) as (cabecalho, linhas):
+            i_ref, i_uf, i_area, i_valor, i_emp = indices_de(
+                cabecalho,
+                "REF_BACEN",
+                "CD_ESTADO",
+                "VL_AREA_INFORMADA",
+                "VL_PARC_CREDITO",
+                "CD_EMPREENDIMENTO",
+            )
+            maior = max(i_ref, i_uf, i_area, i_valor, i_emp)
+            for linha in linhas:
+                operacoes_lidas += 1
+                if len(linha) <= maior or linha[i_uf].strip().upper() != uf_alvo:
+                    continue
+                area = decimal_ou_none(linha[i_area])
+                if area is None or not (area_min_ha <= area <= area_max_ha):
+                    continue
+
+                produto = culturas_por_codigo.get(linha[i_emp].strip())
+                if alvo_normalizado is not None and (
+                    produto is None or produto.upper() not in alvo_normalizado
+                ):
+                    continue
+
+                ref = linha[i_ref].strip()
+                # Um REF_BACEN pode ter várias operações (NU_ORDEM). Agregação:
+                # área = a MAIOR (a propriedade é a mesma; parcelas diferentes
+                # informam áreas parciais), valor = SOMA (crédito total tomado).
+                # ⚠️ Decisão do parser, não da cliente — confirmar com a Carolina.
+                area_por_ref[ref] = max(area_por_ref.get(ref, 0.0), area)
+                valor = decimal_ou_none(linha[i_valor])
+                if valor is not None:
+                    valor_por_ref[ref] = valor_por_ref.get(ref, 0.0) + valor
+                ops_por_ref[ref] = ops_por_ref.get(ref, 0) + 1
+                if produto:
+                    culturas_por_ref.setdefault(ref, set()).add(produto)
+    except (OSError, KeyError, ValueError) as exc:
+        return ResultadoSicor(
+            operacoes_lidas=operacoes_lidas,
+            etapas_puladas=(
+                *puladas,
+                _pular(f"falha ao ler operações: {exc}", "sicor_operacao"),
+            ),
+        )
+
+    refs_alvo = set(area_por_ref)
+    if not refs_alvo:
+        return ResultadoSicor(
+            operacoes_lidas=operacoes_lidas,
+            etapas_puladas=(
+                *puladas,
+                _pular(
+                    f"nenhuma operação em {uf_alvo} na faixa "
+                    f"{area_min_ha:.0f}–{area_max_ha:.0f} ha no ano {ano}",
+                    "sicor_operacao",
+                ),
+            ),
+        )
+
+    # --- Passo 2: mutuários (streaming) — segunda passada, só o que casa ---
+    # Indexar as 18 milhões de linhas seria o erro de memória da seção 6.
+    # Aqui só entra em memória a linha cujo REF_BACEN está em `refs_alvo`.
+    principais: dict[str, tuple[str, str | None]] = {}
+    coobrigados: dict[str, list[str]] = {}
+    arq_mutuarios = encontrar_arquivo(diretorio, ARQ_MUTUARIOS)
+    if arq_mutuarios is None:
+        return ResultadoSicor(
+            operacoes_lidas=operacoes_lidas,
+            refs_no_alvo=len(refs_alvo),
+            etapas_puladas=(
+                *puladas,
+                _pular(
+                    "SICOR_MUTUARIOS ausente — sem ele não há lead identificável",
+                    "sicor_mutuarios",
+                ),
+            ),
+        )
+    try:
+        with leitor_csv(arq_mutuarios) as (cabecalho, linhas):
+            i_ref, i_doc, i_tipo, i_primeiro = indices_de(
+                cabecalho,
+                "REF_BACEN",
+                "CD_CPF_CNPJ",
+                "CD_TIPO_BENEFICIARIO",
+                "CD_PRIMEIRO",
+            )
+            maior = max(i_ref, i_doc, i_tipo, i_primeiro)
+            for linha in linhas:
+                if len(linha) <= maior:
+                    continue
+                ref = linha[i_ref].strip()
+                if ref not in refs_alvo:
+                    continue
+                documento = texto_ou_none(linha[i_doc])
+                if documento is None:
+                    continue
+                if linha[i_primeiro].strip().upper() == "S":
+                    principais[ref] = (documento, texto_ou_none(linha[i_tipo]))
+                else:
+                    coobrigados.setdefault(ref, []).append(documento)
+    except (OSError, KeyError, ValueError) as exc:
+        return ResultadoSicor(
+            operacoes_lidas=operacoes_lidas,
+            refs_no_alvo=len(refs_alvo),
+            etapas_puladas=(
+                *puladas,
+                _pular(f"falha ao ler mutuários: {exc}", "sicor_mutuarios"),
+            ),
+        )
+
+    # --- Passo 3: propriedades (streaming) — CD_CAR, bônus pro dossiê ------
+    # Mesmo padrão do passo 2. É a maior das três (27,5 milhões de linhas) e
+    # o dado é bônus, então é a única etapa que dá pra desligar por parâmetro.
+    cars: dict[str, list[str]] = {}
+    if incluir_car:
+        arq_propriedades = encontrar_arquivo(diretorio, ARQ_PROPRIEDADES)
+        if arq_propriedades is None:
+            puladas.append(
+                _pular(
+                    "SICOR_PROPRIEDADES ausente — leads saem sem código do CAR",
+                    "sicor_car",
+                )
+            )
+        else:
+            try:
+                with leitor_csv(arq_propriedades) as (cabecalho, linhas):
+                    i_ref, i_car = indices_de(cabecalho, "REF_BACEN", "CD_CAR")
+                    maior = max(i_ref, i_car)
+                    identificados = set(principais)
+                    for linha in linhas:
+                        if len(linha) <= maior:
+                            continue
+                        ref = linha[i_ref].strip()
+                        if ref not in identificados:
+                            continue
+                        # "-1" é sentinela de vazio nesta coluna, não um código.
+                        car = texto_ou_none(linha[i_car])
+                        if car is not None and car not in cars.setdefault(ref, []):
+                            cars[ref].append(car)
+            except (OSError, KeyError, ValueError) as exc:
+                puladas.append(_pular(f"falha ao ler propriedades: {exc}", "sicor_car"))
+
+    # --- Montagem do resultado --------------------------------------------
+    leads = tuple(
+        LeadSicor(
+            ref_bacen=ref,
+            documento=documento,
+            tipo_beneficiario=tipo,
+            area_ha=area_por_ref.get(ref),
+            valor_financiado=valor_por_ref.get(ref),
+            culturas=tuple(sorted(culturas_por_ref.get(ref, ()))),
+            codigos_car=tuple(cars.get(ref, ())),
+            n_operacoes=ops_por_ref.get(ref, 0),
+            coobrigados=tuple(coobrigados.get(ref, ())),
+        )
+        for ref, (documento, tipo) in sorted(principais.items())
+    )
+
+    return ResultadoSicor(
+        leads=leads,
+        operacoes_lidas=operacoes_lidas,
+        refs_no_alvo=len(refs_alvo),
+        refs_identificados=len(leads),
+        # Diferença esperada e normal: crédito privado, sem identificação.
+        refs_sem_mutuario=len(refs_alvo) - len(principais),
+        etapas_puladas=tuple(puladas),
+    )

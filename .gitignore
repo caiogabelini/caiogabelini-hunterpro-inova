@@ -4,3 +4,6 @@ __pycache__/
 .env
 .pytest_cache/
 node_modules/
+
+# Arquivos em lote de fonte de dado (centenas de MB) — nunca versionar
+backend/dados_locais/

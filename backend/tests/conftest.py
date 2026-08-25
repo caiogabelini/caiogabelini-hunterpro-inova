@@ -1,22 +1,75 @@
 """Fixtures compartilhadas da suíte.
 
-A Fase 1 não tem nenhuma fonte de dado externa, então ainda **não existe** a
-fixture ``autouse`` que bloqueia chamada de rede — a que a seção 6 do
-docs_fundacao.md exige (dois incidentes reais no Minotto: 21 s de chamada ao
-Google com chave de produção, e um crédito do Hunter.io queimado por um
-teste). Ela entra junto com o primeiro módulo de ``app/services/``, no mesmo
-commit, não depois.
+Chegou o primeiro módulo de ``app/services/`` (o Sicor), então chegou junto a
+fixture ``autouse`` que **bloqueia qualquer chamada de rede** — como
+prometido na Fase 1, no mesmo commit e não depois.
+
+Por que ela existe (seção 6 do docs_fundacao.md, dois incidentes reais no
+Minotto): um teste que mockou tudo *menos* ``search_google_places`` fez uma
+chamada real de ~21 s ao Google com a chave de produção; outro que esqueceu
+de mockar ``enrich_email`` **queimou um crédito** do plano Free do Hunter.io.
+A correção não é "lembrar de mockar" — é bloquear por padrão e obrigar quem
+precisa do caminho real a liberar explicitamente.
+
+O Sicor lê arquivo local e não faz rede nenhuma, então a fixture não muda
+nada hoje. É exatamente por isso que ela entra agora: o primeiro módulo que
+*fizer* rede já nasce dentro da rede de proteção.
 """
 
 from __future__ import annotations
 
+import socket
 from collections.abc import Iterator
+from pathlib import Path
 
 import pytest
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.models import Base
+
+#: Arquivos reais do Sicor. Não são versionados (centenas de MB) — os testes
+#: que dependem deles pulam com motivo claro quando não estão em disco.
+DIR_SICOR = Path(__file__).resolve().parent.parent / "dados_locais" / "sicor"
+
+ARQUIVOS_SICOR = (
+    "SICOR_OPERACAO_BASICA_ESTADO_2026.gz",
+    "SICOR_MUTUARIOS.gz",
+    "SICOR_PROPRIEDADES.gz",
+    "Empreendimento.csv",
+)
+
+
+def sicor_disponivel() -> bool:
+    return all((DIR_SICOR / nome).is_file() for nome in ARQUIVOS_SICOR)
+
+
+#: Marcador pros testes que exigem os arquivos reais em disco.
+exige_arquivos_sicor = pytest.mark.skipif(
+    not sicor_disponivel(),
+    reason=f"arquivos reais do Sicor ausentes em {DIR_SICOR} (não são versionados)",
+)
+
+
+@pytest.fixture(autouse=True)
+def sem_rede(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Bloqueia toda conexão de socket na suíte inteira.
+
+    Quem precisar de rede de verdade marca o teste com ``@pytest.mark.rede`` —
+    liberação explícita e visível na leitura do teste, nunca por esquecimento.
+    """
+    if request.node.get_closest_marker("rede"):
+        return
+
+    def _proibido(self, endereco, *args, **kwargs):  # noqa: ANN001, ANN202
+        raise AssertionError(
+            f"chamada de rede bloqueada no teste ({endereco!r}). Toda fonte "
+            f"externa tem que ser mockada; se este teste precisa mesmo de "
+            f"rede, marque com @pytest.mark.rede."
+        )
+
+    monkeypatch.setattr(socket.socket, "connect", _proibido)
+    monkeypatch.setattr(socket.socket, "connect_ex", _proibido)
 
 # CPFs e CNPJs válidos (dígitos verificadores conferem) usados na suíte.
 CPF_VALIDO = "52998224725"

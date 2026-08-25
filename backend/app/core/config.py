@@ -28,6 +28,20 @@ class Settings(BaseSettings):
     #: candidatos se revelam inaproveitáveis depois do corte.
     LEADS_MARGEM_PRE_SELECAO: float = 1.2
 
+    # --- Fontes pagas -----------------------------------------------------
+    #: Token da API Full (bureau privado, pré-pago) — resolve nome e telefone
+    #: de CPF, que é o que a BrasilAPI não faz. Vazio = etapa pulada com
+    #: motivo, nunca uma chamada que toma 401 em silêncio (guarda de
+    #: configuração da seção 3).
+    API_FULL_TOKEN: str = ""
+    API_FULL_BASE_URL: str = "https://api.apifull.com.br"
+    #: BrasilAPI — espelho gratuito dos Dados Abertos do CNPJ. Só CNPJ.
+    BRASIL_API_BASE_URL: str = "https://brasilapi.com.br"
+
+    @property
+    def api_full_configurada(self) -> bool:
+        return bool(self.API_FULL_TOKEN.strip())
+
     @property
     def cota_pre_selecao(self) -> int:
         """Quantos candidatos a pré-seleção deve entregar (com margem).

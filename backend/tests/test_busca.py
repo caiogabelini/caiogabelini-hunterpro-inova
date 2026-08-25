@@ -169,15 +169,44 @@ class TestBuscaComRecortesReais:
 
 
 class TestParaAntesDoCusto:
-    def test_o_enriquecimento_pago_ainda_nao_existe(self) -> None:
-        """Stub explícito: falha alto se alguém chamar antes da hora."""
-        with pytest.raises(NotImplementedError, match="fase futura"):
-            enriquecer_selecionados([])
+    """A busca lê semente e pré-seleciona. **Não gasta.**
 
-    def test_a_busca_nao_chama_enriquecimento(self, tmp_path: Path) -> None:
-        """Se chamasse, o NotImplementedError vazaria — não vaza."""
+    Desde a Fase 5 o enriquecimento do decisor existe (``api_full`` /
+    ``brasil_api``), mas continua fora de ``executar_busca_mensal``: quem
+    quiser gastar chama ``enriquecer_selecionados`` explicitamente, depois
+    de olhar o corte.
+    """
+
+    def test_a_busca_nao_enriquece_sozinha(self, tmp_path: Path) -> None:
         r = executar_busca_mensal(dir_sicor=tmp_path, dir_rfb=tmp_path, anos=[2026])
         assert isinstance(r, ResultadoBusca)
+
+    @exige_amostras
+    def test_busca_completa_nao_toca_em_fonte_paga(self) -> None:
+        """A fixture de rede levantaria se alguma etapa saísse pra internet."""
+        r = executar_busca_mensal(
+            dir_sicor=DIR_SICOR_AMOSTRA, dir_rfb=DIR_RFB_AMOSTRA, anos=[2026], cota=60
+        )
+        assert r.ok
+        assert all(not c.nome for c in r.selecionados if c.origem == ORIGEM_SICOR)
+
+    def test_o_stub_agora_delega_em_vez_de_levantar(self) -> None:
+        """Fronteira nova: lote vazio devolve lista vazia, sem gastar nada."""
+        assert enriquecer_selecionados([]) == []
+
+    def test_as_demais_etapas_pagas_continuam_fora(self) -> None:
+        """Google Places, Firecrawl, WhatsApp, e-mail e presença digital
+        ainda não existem — se alguém adicionar, este teste avisa."""
+        import app.workers.enriquecimento as enr
+
+        for etapa in (
+            "search_google_places",
+            "enrich_site_firecrawl",
+            "validate_whatsapp",
+            "enrich_email",
+            "enrich_presenca_digital",
+        ):
+            assert not hasattr(enr, etapa), f"{etapa} entrou sem revisão de custo"
 
 
 @pytest.fixture(scope="session")

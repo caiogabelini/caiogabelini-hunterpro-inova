@@ -186,35 +186,30 @@ def executar_busca_mensal(
     )
 
 
-def enriquecer_selecionados(selecionados: Sequence[Candidato]) -> None:
-    """⛔ **Fase futura — aqui entra o enriquecimento pago.** Ainda não existe.
+def enriquecer_selecionados(
+    selecionados: Sequence[Candidato],
+    *,
+    cliente_api_full=None,
+    cliente_brasil_api=None,
+) -> list:
+    """Enriquecimento pago dos selecionados — hoje **só o decisor**.
 
-    Este stub marca o ponto exato de entrada, pra que a próxima sessão não
-    tenha que redescobrir onde encaixar. A ordem de dependências é a da §3 do
-    docs_fundacao.md, adaptada ao nicho:
+    Delega pra ``app.workers.enriquecimento``, onde mora a lógica e a
+    documentação de custo. Aqui fica só o ponto de entrada que a orquestração
+    referencia, pra quem lê ``busca.py`` achar a fronteira sem procurar.
 
-    1. ``enrich_receita_federal`` (BrasilAPI, 1 chamada por CNPJ) — razão
-       social, município/UF, código IBGE e **quadro de sócios**.
-       ⚠️ É aqui que ``decisor_identificavel`` (peso 20) é resolvido, e é
-       aqui **de propósito**: decidido em 25/08/2026 que ele NÃO entra na
-       pré-seleção, porque exige uma chamada por documento e a regra da §3 é
-       que só sinal gratuito e já disponível decide o corte.
-       ⚠️ E vale só pra CNPJ: a BrasilAPI é consulta de CNPJ. Os 97,4% de
-       pessoa física do Sicor **não têm equivalente** — como obter nome e
-       decisor de um CPF continua em aberto (provável busca ativa via Google
-       Places, escopo de sessão futura).
-    2. ``search_google_places`` — depende do nome vindo da etapa 1.
-    3. ``enrich_site_firecrawl`` — depende do site da etapa 2.
-    4. ``validate_whatsapp`` — telefone; prioridade wa.me do site > Places.
-    5. ``enrich_email`` — domínio da etapa 2 + decisor da etapa 1.
-    6. persistência (upsert por ``documento``, a chave de negócio).
-    7. ``compute_lead_score`` — precisa do ``lead.id`` real, então vem depois
-       da persistência.
+    ⚠️ **Custa dinheiro**: uma chamada por candidato, e ~97% deles são CPF,
+    que vai pra fonte paga (API Full). Só é chamada DEPOIS da pré-seleção ter
+    cortado o volume — nunca antes.
 
-    Cada etapa tem que rodar dentro de um wrapper que engole exceção e
-    registra o motivo em ``Lead.etapas_puladas`` (§6): um timeout no 12º de 60
-    leads não pode derrubar os 11 já processados.
+    As demais etapas pagas da §3 (Google Places, Firecrawl, WhatsApp, e-mail,
+    presença digital) continuam fora desta fase; ver os TODO em
+    ``app.workers.enriquecimento.enriquecer_decisor``.
     """
-    raise NotImplementedError(
-        "enriquecimento pago é fase futura — a busca atual para na pré-seleção"
+    from app.workers.enriquecimento import enriquecer_lote
+
+    return enriquecer_lote(
+        selecionados,
+        cliente_api_full=cliente_api_full,
+        cliente_brasil_api=cliente_brasil_api,
     )

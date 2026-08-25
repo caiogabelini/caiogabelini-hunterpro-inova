@@ -52,6 +52,11 @@ def rfb_disponivel() -> bool:
     return all((DIR_RFB / nome).is_file() for nome in ARQUIVOS_RFB)
 
 
+#: Recorte real da Receita Federal (PR, CNAE agro), versionado. Bytes
+#: originais do arquivo da Receita, só filtrados por UF+CNAE.
+DIR_RFB_AMOSTRA = Path(__file__).resolve().parent / "dados_teste" / "rfb_amostra"
+
+
 def sicor_disponivel() -> bool:
     return all((DIR_SICOR / nome).is_file() for nome in ARQUIVOS_SICOR)
 

@@ -1,0 +1,7 @@
+Migrations do HunterPro — Inova.
+
+Ritual de validação (seção 7 do docs_fundacao.md), obrigatório pra toda
+migration nova: cluster descartável em porta alta + socket Unix curto,
+upgrade head → downgrade -1 → upgrade head → conferir \d contra o model →
+destruir o cluster. O script `scripts/validar_migration.sh` executa o ritual
+inteiro e reporta cada etapa.

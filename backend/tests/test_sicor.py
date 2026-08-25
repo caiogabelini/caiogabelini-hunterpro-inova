@@ -28,11 +28,19 @@ from tests.conftest import DIR_SICOR, exige_arquivos_sicor
 
 DIR_AMOSTRA = Path(__file__).resolve().parent / "dados_teste" / "sicor_amostra"
 
-# Composição da amostra, fixada na hora de recortá-la a partir dos arquivos
-# reais: 25 REF_BACEN identificáveis + 10 sem mutuário (o caso dos ~70%).
+# Composição da amostra, fixada ao recortá-la dos arquivos reais.
+# 2026: 25 REF_BACEN identificáveis + 10 sem mutuário (o caso dos ~70%).
 AMOSTRA_NO_ALVO = 35
 AMOSTRA_IDENTIFICADOS = 25
 AMOSTRA_SEM_MUTUARIO = 10
+# 2025: 22 no alvo, 11 identificáveis — sendo 7 documentos que também
+# aparecem em 2026 (produtores recorrentes) e 4 exclusivos de 2025.
+AMOSTRA_2025_NO_ALVO = 22
+AMOSTRA_2025_IDENTIFICADOS = 11
+# Combinado: 36 REF_BACEN identificados colapsam em 29 documentos distintos.
+AMOSTRA_COMBINADA_REFS = 36
+AMOSTRA_COMBINADA_DOCUMENTOS = 29
+AMOSTRA_RECORRENTES = 7
 
 exige_amostra = pytest.mark.skipif(
     not (DIR_AMOSTRA / "SICOR_MUTUARIOS.gz").is_file(),
@@ -43,6 +51,16 @@ exige_amostra = pytest.mark.skipif(
 @pytest.fixture(scope="session")
 def resultado_amostra() -> ResultadoSicor:
     return extrair_leads_sicor(DIR_AMOSTRA, uf="PR", anos=[2026])
+
+
+@pytest.fixture(scope="session")
+def resultado_amostra_2025() -> ResultadoSicor:
+    return extrair_leads_sicor(DIR_AMOSTRA, uf="PR", anos=[2025])
+
+
+@pytest.fixture(scope="session")
+def resultado_amostra_combinado() -> ResultadoSicor:
+    return extrair_leads_sicor(DIR_AMOSTRA, uf="PR", anos=[2025, 2026])
 
 
 @pytest.fixture(scope="session")
@@ -168,12 +186,23 @@ class TestNuncaLevanta:
         assert "nenhum ano" in r.etapas_puladas[0]["motivo"]
 
     @exige_amostra
-    def test_multi_ano_avisa_em_vez_de_silenciar(self) -> None:
-        """Fase 4 implementa; até lá o comportamento tem que ser explícito."""
+    def test_ano_sem_arquivo_nao_derruba_os_outros(self) -> None:
+        """Perder 2024 não pode custar 2025 e 2026."""
         r = extrair_leads_sicor(DIR_AMOSTRA, uf="PR", anos=[2026, 2025, 2024])
-        assert r.refs_identificados == AMOSTRA_IDENTIFICADOS  # processou 2026
-        pulada = next(e for e in r.etapas_puladas if e["etapa"] == "sicor_multi_ano")
-        assert "[2025, 2024]" in pulada["motivo"]
+        assert r.anos_processados == (2026, 2025)
+        assert len(r.leads) == AMOSTRA_COMBINADA_DOCUMENTOS
+        pulada = next(
+            e for e in r.etapas_puladas if "2024" in e["motivo"]
+        )
+        assert pulada["etapa"] == "sicor_operacao"
+
+    @exige_amostra
+    def test_todos_os_anos_ausentes_nao_levanta(self, tmp_path: Path) -> None:
+        for nome in ("SICOR_MUTUARIOS.gz", "Empreendimento.csv"):
+            (tmp_path / nome).write_bytes((DIR_AMOSTRA / nome).read_bytes())
+        r = extrair_leads_sicor(tmp_path, uf="PR", anos=[2023, 2024])
+        assert r.leads == () and r.anos_processados == ()
+        assert len(r.etapas_puladas) >= 2
 
     @exige_amostra
     def test_empreendimento_ausente_da_lead_sem_cultura(self, tmp_path: Path) -> None:
@@ -287,14 +316,24 @@ class TestCulturas:
         assert com_virgula
 
 
+@pytest.fixture(scope="session")
+def resultado_2025() -> ResultadoSicor:
+    return extrair_leads_sicor(DIR_SICOR, uf="PR", anos=[2025])
+
+
+@pytest.fixture(scope="session")
+def resultado_combinado() -> ResultadoSicor:
+    return extrair_leads_sicor(DIR_SICOR, uf="PR", anos=[2025, 2026])
+
+
 @pytest.mark.integracao
 @exige_arquivos_sicor
 class TestArquivosCompletos:
-    """Contra os 3 arquivos completos — 47 milhões de linhas, ~2 min.
+    """Contra os arquivos completos — 47+ milhões de linhas.
 
     Os números vieram da medição contra o dado real. Se algum dessincronizar,
-    a hipótese padrão é **bug no parser**, não dado novo — o arquivo do Bacen
-    é um snapshot estável do ano.
+    a hipótese padrão é **bug no parser**, não dado novo — os arquivos do
+    Bacen são snapshots estáveis por ano.
     """
 
     def test_leu_o_arquivo_de_operacao_inteiro(self, resultado: ResultadoSicor) -> None:
@@ -305,7 +344,18 @@ class TestArquivosCompletos:
 
     def test_identificados_em_mutuarios(self, resultado: ResultadoSicor) -> None:
         assert resultado.refs_identificados == 552
-        assert len(resultado.leads) == 552
+
+    def test_552_operacoes_sao_apenas_496_produtores(
+        self, resultado: ResultadoSicor
+    ) -> None:
+        """Documento é a chave de negócio, não REF_BACEN.
+
+        56 das 552 operações dividem CPF com outra — dentro do MESMO ano.
+        Emitir um lead por operação estouraria o índice único da Fase 1.
+        """
+        assert len(resultado.leads) == 496
+        documentos = [l.documento for l in resultado.leads]
+        assert len(documentos) == len(set(documentos))
 
     def test_taxa_de_identificacao_de_30_por_cento(self, resultado: ResultadoSicor) -> None:
         taxa = resultado.refs_identificados / resultado.refs_no_alvo
@@ -320,14 +370,13 @@ class TestArquivosCompletos:
     def test_98_por_cento_sao_pessoa_fisica(self, resultado: ResultadoSicor) -> None:
         """Bate com o ICP da Inova: produtor rural PF é o alvo."""
         tipos = [detectar_tipo_documento(l.documento) for l in resultado.leads]
-        assert tipos.count("CPF") == 541
-        assert tipos.count("CNPJ") == 11
+        assert tipos.count("CPF") == 486
+        assert tipos.count("CNPJ") == 10
         assert tipos.count("CPF") / len(tipos) == pytest.approx(0.98, abs=0.005)
 
     def test_todo_documento_real_passa_na_validacao_da_fase_1(
         self, resultado: ResultadoSicor
     ) -> None:
-        """552 CPF/CNPJ reais contra o validador commitado na Fase 1."""
         for lead in resultado.leads:
             assert detectar_tipo_documento(lead.documento) in ("CPF", "CNPJ")
 
@@ -339,3 +388,88 @@ class TestArquivosCompletos:
     def test_cd_car_preenchido_em_todos_hoje(self, resultado: ResultadoSicor) -> None:
         """100% hoje. Se cair, o tratamento de "-1" deixa de ser defensivo."""
         assert all(l.codigos_car for l in resultado.leads)
+
+
+@pytest.mark.integracao
+@exige_arquivos_sicor
+class TestMultiAnoArquivosCompletos:
+    """A medição que decide 1 ano vs 2 anos no primeiro lote de produção."""
+
+    def test_2025_e_um_ano_inteiro_e_2026_e_parcial(
+        self, resultado: ResultadoSicor, resultado_2025: ResultadoSicor
+    ) -> None:
+        """2026 tem só jan–jul (arquivo do ano corrente). Não são comparáveis.
+
+        É por isso que 2025 tem quase o dobro do alvo: não é queda de mercado,
+        é ano incompleto.
+        """
+        assert resultado_2025.operacoes_lidas == 2_455_105
+        assert resultado.operacoes_lidas == 1_313_316
+        assert resultado_2025.refs_no_alvo == 3_571
+        assert resultado.refs_no_alvo == 1_856
+
+    def test_2025_sozinho(self, resultado_2025: ResultadoSicor) -> None:
+        assert resultado_2025.refs_identificados == 1_386
+        assert len(resultado_2025.leads) == 1_141
+
+    def test_nenhuma_operacao_aparece_nos_dois_anos(
+        self, resultado: ResultadoSicor, resultado_2025: ResultadoSicor
+    ) -> None:
+        """A garantia que torna a SOMA do valor segura entre anos."""
+        refs_26 = {r for l in resultado.leads for r in l.refs_bacen}
+        refs_25 = {r for l in resultado_2025.leads for r in l.refs_bacen}
+        assert refs_26 & refs_25 == set()
+
+    def test_alvo_combinado_e_a_soma_exata(
+        self,
+        resultado: ResultadoSicor,
+        resultado_2025: ResultadoSicor,
+        resultado_combinado: ResultadoSicor,
+    ) -> None:
+        assert resultado_combinado.refs_no_alvo == 5_427
+        assert resultado_combinado.refs_no_alvo == (
+            resultado.refs_no_alvo + resultado_2025.refs_no_alvo
+        )
+        assert resultado_combinado.refs_por_ano == {2025: 3_571, 2026: 1_856}
+
+    def test_overlap_real_de_produtores_entre_os_anos(
+        self,
+        resultado: ResultadoSicor,
+        resultado_2025: ResultadoSicor,
+        resultado_combinado: ResultadoSicor,
+    ) -> None:
+        """198 produtores tomaram crédito nos dois anos."""
+        d26 = {l.documento for l in resultado.leads}
+        d25 = {l.documento for l in resultado_2025.leads}
+        assert len(d25 & d26) == 198
+        recorrentes = [l for l in resultado_combinado.leads if l.recorrente]
+        assert len(recorrentes) == 198
+
+    def test_universo_combinado_e_o_numero_que_importa(
+        self, resultado: ResultadoSicor, resultado_combinado: ResultadoSicor
+    ) -> None:
+        """1.439 produtores distintos — +943 sobre 2026 sozinho (+190%)."""
+        assert len(resultado_combinado.leads) == 1_439
+        ganho = len(resultado_combinado.leads) - len(resultado.leads)
+        assert ganho == 943
+
+    def test_continua_sendo_pessoa_fisica_no_combinado(
+        self, resultado_combinado: ResultadoSicor
+    ) -> None:
+        """97,4% — praticamente o mesmo dos 98% de 2026 sozinho."""
+        tipos = [detectar_tipo_documento(l.documento) for l in resultado_combinado.leads]
+        assert tipos.count("CPF") == 1_401
+        assert tipos.count("CPF") / len(tipos) == pytest.approx(0.974, abs=0.002)
+
+    def test_documentos_combinados_sao_unicos(
+        self, resultado_combinado: ResultadoSicor
+    ) -> None:
+        documentos = [l.documento for l in resultado_combinado.leads]
+        assert len(documentos) == len(set(documentos))
+
+    def test_mutuarios_e_lido_uma_vez_so_mesmo_com_dois_anos(
+        self, resultado_combinado: ResultadoSicor
+    ) -> None:
+        """`operacoes_lidas` conta só operação: os 18M de mutuários e os 27M
+        de propriedades são varridos UMA vez, não uma por ano."""
+        assert resultado_combinado.operacoes_lidas == 1_313_316 + 2_455_105

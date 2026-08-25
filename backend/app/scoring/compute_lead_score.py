@@ -109,32 +109,33 @@ def _rampa_linear(valor: Any, minimo: float, maximo: float) -> float:
 # Réguas por critério
 # --------------------------------------------------------------------------
 
-# TODO(Carolina): a régua de tamanho_propriedade é PLACEHOLDER.
+# ---------------------------------------------------------------------------
+# Réguas CALIBRADAS com a cliente (Carolina) — não são mais placeholder.
+# ---------------------------------------------------------------------------
 #
-# A cliente informou só o **intervalo de interesse** — 150 a 1400 hectares —
-# e não como pontuar *dentro* dele. Uma rampa linear é o palpite mais
-# inocente possível, e provavelmente está errada: é plausível que a curva
-# real seja em degraus (faixas comerciais de atendimento) ou que sature bem
-# antes de 1400 ha, porque acima de certo tamanho o produtor já tem
-# contabilidade própria e deixa de ser lead. Como este é o critério de MAIOR
-# peso (30), errar a régua aqui distorce o ranking inteiro.
+# As duas seguem a mesma forma: **patamar único (flat)** a partir de um corte,
+# e uma **fração baixa** abaixo dele. Não escalam por tamanho nem por valor.
 #
-# Confirmar com ela antes da primeira busca real:
-#   1. Um produtor de 1400 ha vale de fato ~4x um de 300 ha, ou o ganho
-#      satura em algum ponto?
-#   2. Existe teto a partir do qual o lead deixa de interessar (score volta
-#      a cair), em vez de continuar somando?
-#   3. Abaixo de 150 ha é 0 mesmo, ou é "vale menos"?
-TAMANHO_PROPRIEDADE_HA_MIN = 150.0
+# ⚠️ Por que flat, e por que isso importa: a cliente foi explícita de que um
+# produtor de 200 ha e um de 1.200 ha valem o MESMO pra ela. A rampa linear
+# anterior era suposição nossa, e ordenava a pré-seleção por hectare —
+# efetivamente rankeando por porte, que não é o critério dela.
+#
+# ⚠️ Abaixo do corte NÃO é zero. Ela disse "ainda podemos considerar", não
+# "descarta". Zero excluiria o lead do ranking; a fração baixa mantém ele
+# atrás de quem está na faixa, sem eliminá-lo.
+
+#: Faixa plena de tamanho_propriedade. Acima do máximo **também é patamar
+#: pleno** — ela confirmou que não há teto que reduza pontuação.
+TAMANHO_PROPRIEDADE_HA_MIN = 100.0
 TAMANHO_PROPRIEDADE_HA_MAX = 1400.0
 
-# TODO(Carolina): mesma pendência, menor impacto. O peso 10 de
-# valor_financiado é confirmado, mas a FAIXA abaixo não veio dela — é um
-# chute operacional pra haver algo testável. Confirmar junto com a régua de
-# tamanho, na mesma conversa. Revisitar depois do primeiro lote real de
-# Sicor, quando der pra ver a distribuição de verdade em vez de supor.
+#: Corte de valor_financiado. R$ 100 mil já é plenamente relevante, e
+#: R$ 3 milhões não vale mais que isso.
 VALOR_FINANCIADO_MIN = 100_000.0
-VALOR_FINANCIADO_MAX = 3_000_000.0
+
+#: Fração de quem fica abaixo do corte. Não é zero de propósito (ver acima).
+FRACAO_ABAIXO_DO_CORTE = 0.25
 
 # Nota do Google: 3.0 é o piso do que conta como "boa nota", 5.0 é o teto.
 # Peso 0 hoje — a régua existe pro dossiê exibir o sinal (ver docstring).
@@ -142,14 +143,31 @@ GOOGLE_RATING_MIN = 3.0
 GOOGLE_RATING_MAX = 5.0
 
 
+def _patamar(valor: Any, corte: float) -> float:
+    """1.0 a partir de ``corte``; ``FRACAO_ABAIXO_DO_CORTE`` abaixo dele.
+
+    Valor ilegível vira 0.0 — "não sabemos" não pode virar meio ponto.
+    """
+    try:
+        v = float(valor)
+    except (TypeError, ValueError):
+        return 0.0
+    return 1.0 if v >= corte else FRACAO_ABAIXO_DO_CORTE
+
+
 def _regra_tamanho_propriedade(valor: Any) -> float:
-    """PLACEHOLDER — rampa linear entre 150 e 1400 ha. Ver TODO(Carolina)."""
-    return _rampa_linear(valor, TAMANHO_PROPRIEDADE_HA_MIN, TAMANHO_PROPRIEDADE_HA_MAX)
+    """Patamar único de 100 ha pra cima; 0,25 abaixo disso.
+
+    ⚠️ O máximo de 1.400 ha NÃO reduz a pontuação — está aqui só como
+    documentação da faixa que a cliente descreveu. Acima dele o produtor
+    pontua igual.
+    """
+    return _patamar(valor, TAMANHO_PROPRIEDADE_HA_MIN)
 
 
 def _regra_valor_financiado(valor: Any) -> float:
-    """PLACEHOLDER — rampa linear entre R$ 100 mil e R$ 3 mi. Ver TODO."""
-    return _rampa_linear(valor, VALOR_FINANCIADO_MIN, VALOR_FINANCIADO_MAX)
+    """Patamar único de R$ 100 mil pra cima; 0,25 abaixo disso."""
+    return _patamar(valor, VALOR_FINANCIADO_MIN)
 
 
 def _regra_google_rating(valor: Any) -> float:

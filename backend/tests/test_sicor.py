@@ -19,6 +19,8 @@ import pytest
 
 from app.core.documentos import detectar_tipo_documento, normalizar_documento
 from app.services.sicor import (
+    AREA_MAX_HA_PADRAO,
+    AREA_MIN_HA_PADRAO,
     LeadSicor,
     ResultadoSicor,
     carregar_culturas,
@@ -102,7 +104,7 @@ class TestAmostraReal:
     def test_area_dentro_da_faixa_pedida(self, resultado_amostra: ResultadoSicor) -> None:
         for lead in resultado_amostra.leads:
             assert lead.area_ha is not None
-            assert 150.0 <= lead.area_ha <= 1400.0
+            assert AREA_MIN_HA_PADRAO <= lead.area_ha <= AREA_MAX_HA_PADRAO
 
     def test_cd_car_nunca_traz_a_sentinela(self, resultado_amostra: ResultadoSicor) -> None:
         """A amostra inclui linhas REAIS de propriedades com CD_CAR='-1'."""
@@ -147,7 +149,7 @@ class TestFiltros:
 
     def test_faixa_de_area_e_parametrizavel(self) -> None:
         estreita = extrair_leads_sicor(
-            DIR_AMOSTRA, uf="PR", anos=[2026], area_min_ha=150, area_max_ha=200
+            DIR_AMOSTRA, uf="PR", anos=[2026], area_min_ha=100, area_max_ha=200
         )
         larga = extrair_leads_sicor(DIR_AMOSTRA, uf="PR", anos=[2026])
         assert estreita.refs_no_alvo < larga.refs_no_alvo
@@ -242,7 +244,7 @@ class TestSentinelaCarNoPipeline:
     """CD_CAR ausente vs "-1", os dois no caminho completo do parser.
 
     ⚠️ Fixture construída de propósito (formato e sentinelas reais, pareamento
-    montado). Motivo: nos 552 leads identificados do arquivo real, CD_CAR vem
+    montado). Motivo: nos leads identificados do arquivo real, CD_CAR vem
     **100% preenchido** — o caso "-1 num ref que virou lead" não ocorre hoje.
     O tratamento é defensivo, e defensivo só se testa construindo o caso.
     """
@@ -256,8 +258,9 @@ class TestSentinelaCarNoPipeline:
             newline="",
         ) as f:
             f.write(
-                "#REF_BACEN;CD_ESTADO;VL_AREA_INFORMADA;VL_PARC_CREDITO;CD_EMPREENDIMENTO\n"
-                "999;PR;300.00;500000.00;12016720000012\n"
+                "#REF_BACEN;CD_ESTADO;VL_AREA_INFORMADA;VL_PARC_CREDITO;"
+                "CD_EMPREENDIMENTO;DT_EMISSAO\n"
+                "999;PR;300.00;500000.00;12016720000012;15/03/2026\n"
             )
         with gzip.open(
             tmp_path / "SICOR_MUTUARIOS.gz", "wt", encoding="latin-1", newline=""
@@ -340,39 +343,39 @@ class TestArquivosCompletos:
         assert resultado.operacoes_lidas == 1_313_316
 
     def test_universo_alvo_no_pr(self, resultado: ResultadoSicor) -> None:
-        assert resultado.refs_no_alvo == 1_856
+        assert resultado.refs_no_alvo == 3_760
 
     def test_identificados_em_mutuarios(self, resultado: ResultadoSicor) -> None:
-        assert resultado.refs_identificados == 552
+        assert resultado.refs_identificados == 1_167
 
-    def test_552_operacoes_sao_apenas_496_produtores(
+    def test_1167_operacoes_sao_apenas_1023_produtores(
         self, resultado: ResultadoSicor
     ) -> None:
         """Documento é a chave de negócio, não REF_BACEN.
 
-        56 das 552 operações dividem CPF com outra — dentro do MESMO ano.
+        144 das 1.167 operações dividem CPF com outra — dentro do MESMO ano.
         Emitir um lead por operação estouraria o índice único da Fase 1.
         """
-        assert len(resultado.leads) == 496
+        assert len(resultado.leads) == 1_023
         documentos = [l.documento for l in resultado.leads]
         assert len(documentos) == len(set(documentos))
 
     def test_taxa_de_identificacao_de_30_por_cento(self, resultado: ResultadoSicor) -> None:
         taxa = resultado.refs_identificados / resultado.refs_no_alvo
-        assert taxa == pytest.approx(0.297, abs=0.001)
+        assert taxa == pytest.approx(0.310, abs=0.001)
 
     def test_os_70_por_cento_restantes_sao_credito_privado(
         self, resultado: ResultadoSicor
     ) -> None:
-        assert resultado.refs_sem_mutuario == 1_304
+        assert resultado.refs_sem_mutuario == 2_593
         assert resultado.etapas_puladas == ()
 
     def test_98_por_cento_sao_pessoa_fisica(self, resultado: ResultadoSicor) -> None:
         """Bate com o ICP da Inova: produtor rural PF é o alvo."""
         tipos = [detectar_tipo_documento(l.documento) for l in resultado.leads]
-        assert tipos.count("CPF") == 486
-        assert tipos.count("CNPJ") == 10
-        assert tipos.count("CPF") / len(tipos) == pytest.approx(0.98, abs=0.005)
+        assert tipos.count("CPF") == 1_009
+        assert tipos.count("CNPJ") == 14
+        assert tipos.count("CPF") / len(tipos) == pytest.approx(0.986, abs=0.005)
 
     def test_todo_documento_real_passa_na_validacao_da_fase_1(
         self, resultado: ResultadoSicor
@@ -405,12 +408,12 @@ class TestMultiAnoArquivosCompletos:
         """
         assert resultado_2025.operacoes_lidas == 2_455_105
         assert resultado.operacoes_lidas == 1_313_316
-        assert resultado_2025.refs_no_alvo == 3_571
-        assert resultado.refs_no_alvo == 1_856
+        assert resultado_2025.refs_no_alvo == 7_166
+        assert resultado.refs_no_alvo == 3_760
 
     def test_2025_sozinho(self, resultado_2025: ResultadoSicor) -> None:
-        assert resultado_2025.refs_identificados == 1_386
-        assert len(resultado_2025.leads) == 1_141
+        assert resultado_2025.refs_identificados == 2_833
+        assert len(resultado_2025.leads) == 2_280
 
     def test_nenhuma_operacao_aparece_nos_dois_anos(
         self, resultado: ResultadoSicor, resultado_2025: ResultadoSicor
@@ -426,11 +429,11 @@ class TestMultiAnoArquivosCompletos:
         resultado_2025: ResultadoSicor,
         resultado_combinado: ResultadoSicor,
     ) -> None:
-        assert resultado_combinado.refs_no_alvo == 5_427
+        assert resultado_combinado.refs_no_alvo == 10_926
         assert resultado_combinado.refs_no_alvo == (
             resultado.refs_no_alvo + resultado_2025.refs_no_alvo
         )
-        assert resultado_combinado.refs_por_ano == {2025: 3_571, 2026: 1_856}
+        assert resultado_combinado.refs_por_ano == {2025: 7_166, 2026: 3_760}
 
     def test_overlap_real_de_produtores_entre_os_anos(
         self,
@@ -438,28 +441,28 @@ class TestMultiAnoArquivosCompletos:
         resultado_2025: ResultadoSicor,
         resultado_combinado: ResultadoSicor,
     ) -> None:
-        """198 produtores tomaram crédito nos dois anos."""
+        """497 produtores tomaram crédito nos dois anos."""
         d26 = {l.documento for l in resultado.leads}
         d25 = {l.documento for l in resultado_2025.leads}
-        assert len(d25 & d26) == 198
+        assert len(d25 & d26) == 497
         recorrentes = [l for l in resultado_combinado.leads if l.recorrente]
-        assert len(recorrentes) == 198
+        assert len(recorrentes) == 497
 
     def test_universo_combinado_e_o_numero_que_importa(
         self, resultado: ResultadoSicor, resultado_combinado: ResultadoSicor
     ) -> None:
-        """1.439 produtores distintos — +943 sobre 2026 sozinho (+190%)."""
-        assert len(resultado_combinado.leads) == 1_439
+        """2.806 produtores distintos — +1.783 sobre 2026 sozinho (+174%)."""
+        assert len(resultado_combinado.leads) == 2_806
         ganho = len(resultado_combinado.leads) - len(resultado.leads)
-        assert ganho == 943
+        assert ganho == 1_783
 
     def test_continua_sendo_pessoa_fisica_no_combinado(
         self, resultado_combinado: ResultadoSicor
     ) -> None:
         """97,4% — praticamente o mesmo dos 98% de 2026 sozinho."""
         tipos = [detectar_tipo_documento(l.documento) for l in resultado_combinado.leads]
-        assert tipos.count("CPF") == 1_401
-        assert tipos.count("CPF") / len(tipos) == pytest.approx(0.974, abs=0.002)
+        assert tipos.count("CPF") == 2_756
+        assert tipos.count("CPF") / len(tipos) == pytest.approx(0.982, abs=0.002)
 
     def test_documentos_combinados_sao_unicos(
         self, resultado_combinado: ResultadoSicor
@@ -473,3 +476,35 @@ class TestMultiAnoArquivosCompletos:
         """`operacoes_lidas` conta só operação: os 18M de mutuários e os 27M
         de propriedades são varridos UMA vez, não uma por ano."""
         assert resultado_combinado.operacoes_lidas == 1_313_316 + 2_455_105
+
+
+class TestPisoDoFiltroBateComARegua:
+    """O filtro da semente não pode cortar acima do corte da régua.
+
+    Se cortar, a faixa entre os dois vira código morto: nenhum produtor dela
+    chega a ser pontuado, porque a semente já o descartou antes. Foi o que
+    aconteceu entre a calibragem da régua (100 ha) e este ajuste — o filtro
+    ficou em 150 ha por uma sessão.
+
+    ``services`` não importa ``scoring`` de propósito (a dependência aponta
+    ao contrário), então é este teste que amarra os dois números.
+    """
+
+    def test_piso_do_filtro_acompanha_a_regua(self) -> None:
+        from app.scoring.compute_lead_score import TAMANHO_PROPRIEDADE_HA_MIN
+
+        assert AREA_MIN_HA_PADRAO == TAMANHO_PROPRIEDADE_HA_MIN
+
+    def test_teto_do_filtro_acompanha_a_regua(self) -> None:
+        from app.scoring.compute_lead_score import TAMANHO_PROPRIEDADE_HA_MAX
+
+        assert AREA_MAX_HA_PADRAO == TAMANHO_PROPRIEDADE_HA_MAX
+
+    def test_o_filtro_nunca_pode_cortar_acima_da_regua(self) -> None:
+        """A invariante que importa, mesmo se um dia os números divergirem."""
+        from app.scoring.compute_lead_score import TAMANHO_PROPRIEDADE_HA_MIN
+
+        assert AREA_MIN_HA_PADRAO <= TAMANHO_PROPRIEDADE_HA_MIN, (
+            "filtro cortando acima da régua — a faixa entre os dois nunca "
+            "seria pontuada"
+        )

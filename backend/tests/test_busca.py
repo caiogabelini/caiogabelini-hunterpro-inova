@@ -228,7 +228,7 @@ class TestVolumeReal:
 
     def test_populacoes_reais(self, populacoes) -> None:
         leads, estabs = populacoes
-        assert len(leads) == 1_439
+        assert len(leads) == 2_806
         assert len(estabs) == 588
 
     def test_a_cota_contratada_e_preenchida_so_pela_fase_1(self, populacoes) -> None:
@@ -240,19 +240,35 @@ class TestVolumeReal:
         assert not p.fase2_acionada
         assert p.cota_preenchida
 
-    def test_fase2_so_acionaria_acima_de_1439(self, populacoes) -> None:
+    def test_fase2_so_acionaria_acima_de_2806(self, populacoes) -> None:
         """O limiar exato. Abaixo dele a Fase 2 é código que nunca roda."""
         leads, estabs = populacoes
-        assert not pre_selecionar(leads, estabs, cota=1_439).fase2_acionada
-        assert pre_selecionar(leads, estabs, cota=1_440).fase2_acionada
+        assert not pre_selecionar(leads, estabs, cota=2_806).fase2_acionada
+        assert pre_selecionar(leads, estabs, cota=2_807).fase2_acionada
 
-    def test_sobreposicao_real_entre_as_populacoes_e_zero_hoje(
+    def test_dedup_entre_populacoes_bate_com_a_sobreposicao_real(
         self, populacoes
     ) -> None:
-        """Nenhum dos 38 CNPJ do Sicor tem CNAE agro na Receita."""
+        """A dedup DEIXOU de ser no-op quando o piso caiu pra 100 ha.
+
+        Com a faixa 150–1.400 ha a interseção era zero: nenhum dos 38 CNPJ
+        do Sicor tinha CNAE agro na Receita. Com 100–1.400 ha o Sicor traz
+        50 CNPJ, e **1 deles** também aparece na semente da Receita — a
+        primeira vez que o descarte por documento efetivamente atua.
+
+        Este teste afirma a INVARIANTE (descartados == interseção medida),
+        não um número fixo: assim ele acompanha o universo em vez de
+        precisar ser reescrito a cada mudança de faixa.
+        """
         leads, estabs = populacoes
+        documentos_sicor = {l.documento for l in leads}
+        cnpjs_rfb = {e.cnpj for e in estabs}
         p = pre_selecionar(leads, estabs, cota=0)
-        assert p.descartados_por_dedup == 0
+        assert p.descartados_por_dedup == len(documentos_sicor & cnpjs_rfb)
+        assert p.descartados_por_dedup >= 1, (
+            "a sobreposição existe desde o piso de 100 ha — se voltou a zero, "
+            "o universo mudou e vale entender por quê"
+        )
 
     def test_pontos_parciais_ficam_abaixo_do_teto_de_55(self, populacoes) -> None:
         leads, estabs = populacoes

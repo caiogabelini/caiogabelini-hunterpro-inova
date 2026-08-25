@@ -5,12 +5,12 @@ from __future__ import annotations
 import pytest
 
 from app.scoring.compute_lead_score import (
+    FRACAO_ABAIXO_DO_CORTE,
     GOOGLE_RATING_MAX,
     GOOGLE_RATING_MIN,
     REGRAS,
     TAMANHO_PROPRIEDADE_HA_MAX,
     TAMANHO_PROPRIEDADE_HA_MIN,
-    VALOR_FINANCIADO_MAX,
     VALOR_FINANCIADO_MIN,
     calcular_score,
 )
@@ -22,7 +22,7 @@ SINAIS_MAXIMOS = {
     "decisor_identificavel": True,
     "semente_sicor_cultura": True,
     "whatsapp_ativo": True,
-    "valor_financiado": VALOR_FINANCIADO_MAX,
+    "valor_financiado": VALOR_FINANCIADO_MIN,
     "email_validado": True,
     "presenca_digital": True,
     "radar_exportacao": True,
@@ -58,21 +58,35 @@ class TestExtremos:
     def test_none_como_argumento_da_0(self) -> None:
         assert calcular_score(None).score == 0
 
-    def test_todos_os_sinais_falsos_dao_0(self) -> None:
+    def test_sinais_booleanos_falsos_dao_0(self) -> None:
+        """Booleano falso = 0 ponto. Continua valendo depois da calibragem."""
         falsos = {
-            "tamanho_propriedade": 0,
             "decisor_identificavel": False,
             "semente_sicor_cultura": False,
             "whatsapp_ativo": False,
-            "valor_financiado": 0,
             "email_validado": False,
             "presenca_digital": False,
             "radar_exportacao": False,
-            "google_rating": 0.0,
         }
         resultado = calcular_score(falsos)
         assert resultado.score == 0
-        assert resultado.ausentes == (), "falso é sinal PRESENTE que vale 0"
+        # Falso é sinal PRESENTE que vale 0 — não pode entrar em `ausentes`.
+        # Os numéricos não foram informados aqui, então esses SIM ficam
+        # ausentes; é a distinção da §6 entre "não achamos" e "não medimos".
+        assert not set(falsos) & set(resultado.ausentes)
+        assert "tamanho_propriedade" in resultado.ausentes
+
+    def test_sinais_NUMERICOS_no_zero_pontuam_o_piso_nao_zero(self) -> None:
+        """⚠️ Mudou na calibragem: antes a rampa dava 0 no valor mínimo.
+
+        Agora "abaixo do corte" vale ``FRACAO_ABAIXO_DO_CORTE``, porque a
+        cliente disse "ainda podemos considerar". Um produtor pequeno fica
+        atrás na fila, não fora dela.
+        """
+        resultado = calcular_score({"tamanho_propriedade": 0.0, "valor_financiado": 0.0})
+        piso = (30.0 + 10.0) * FRACAO_ABAIXO_DO_CORTE
+        assert resultado.pontos == pytest.approx(piso)
+        assert resultado.score > 0
 
 
 class TestCriteriosIndividuais:
@@ -97,40 +111,66 @@ class TestCriteriosIndividuais:
     @pytest.mark.parametrize(
         ("hectares", "esperado"),
         [
-            (0, 0.0),
-            (100, 0.0),
-            (TAMANHO_PROPRIEDADE_HA_MIN, 0.0),
-            (775.0, 15.0),  # meio exato da rampa 150–1400 → metade dos 30
-            (TAMANHO_PROPRIEDADE_HA_MAX, 30.0),
-            (5000, 30.0),  # satura, não estoura o peso
+            (TAMANHO_PROPRIEDADE_HA_MIN, 30.0),   # 100 ha: já é patamar pleno
+            (200.0, 30.0),
+            (800.0, 30.0),
+            (TAMANHO_PROPRIEDADE_HA_MAX, 30.0),   # 1.400 ha: mesmo patamar
+            (5000.0, 30.0),                       # acima do máximo NÃO despenca
         ],
     )
-    def test_tamanho_propriedade_na_rampa_placeholder(
+    def test_tamanho_e_patamar_unico_na_faixa_e_acima(
         self, hectares: float, esperado: float
     ) -> None:
-        """⚠️ PLACEHOLDER — a régua real ainda vai ser confirmada com a Carolina.
+        """Calibrado com a cliente: 200 ha e 1.200 ha valem o MESMO.
 
-        Estes números travam o comportamento *atual* (rampa linear 150–1400),
-        não uma regra aprovada. Quando ela definir a curva de verdade, este
-        teste muda junto — é esperado.
+        A rampa linear anterior era suposição nossa e ordenava a pré-seleção
+        por hectare — ou seja, por porte, que não é o critério dela.
         """
         assert pontos_de("tamanho_propriedade", hectares) == pytest.approx(esperado)
+
+    @pytest.mark.parametrize("hectares", [0.0, 50.0, 99.9])
+    def test_tamanho_abaixo_do_corte_pontua_MENOS_mas_nao_zero(
+        self, hectares: float
+    ) -> None:
+        """Ela disse "ainda podemos considerar", não "descarta".
+
+        Zero tiraria o lead do ranking; a fração baixa o mantém atrás de quem
+        está na faixa, sem eliminá-lo.
+        """
+        pontos = pontos_de("tamanho_propriedade", hectares)
+        assert pontos == pytest.approx(30.0 * FRACAO_ABAIXO_DO_CORTE)
+        assert 0 < pontos < 30.0
 
     @pytest.mark.parametrize(
         ("reais", "esperado"),
         [
-            (0, 0.0),
-            (VALOR_FINANCIADO_MIN, 0.0),
-            (1_550_000.0, 5.0),  # meio da rampa → metade dos 10
-            (VALOR_FINANCIADO_MAX, 10.0),
-            (50_000_000, 10.0),
+            (VALOR_FINANCIADO_MIN, 10.0),  # R$ 100 mil: patamar pleno
+            (1_000_000.0, 10.0),
+            (3_000_000.0, 10.0),           # R$ 3 mi não vale mais que 100 mil
+            (50_000_000.0, 10.0),
         ],
     )
-    def test_valor_financiado_na_rampa_placeholder(
+    def test_valor_e_patamar_unico_a_partir_de_100_mil(
         self, reais: float, esperado: float
     ) -> None:
-        """⚠️ PLACEHOLDER — faixa não veio da cliente. Ver TODO no módulo."""
         assert pontos_de("valor_financiado", reais) == pytest.approx(esperado)
+
+    @pytest.mark.parametrize("reais", [0.0, 50_000.0, 99_999.0])
+    def test_valor_abaixo_do_corte_pontua_menos_mas_nao_zero(
+        self, reais: float
+    ) -> None:
+        pontos = pontos_de("valor_financiado", reais)
+        assert pontos == pytest.approx(10.0 * FRACAO_ABAIXO_DO_CORTE)
+        assert 0 < pontos < 10.0
+
+    def test_nenhuma_das_duas_reguas_escala_por_tamanho(self) -> None:
+        """A prova direta de que não há mais rampa: dobrar não muda nada."""
+        assert pontos_de("tamanho_propriedade", 200.0) == pontos_de(
+            "tamanho_propriedade", 400.0
+        )
+        assert pontos_de("valor_financiado", 200_000.0) == pontos_de(
+            "valor_financiado", 400_000.0
+        )
 
     def test_presenca_digital_aceita_booleano_ou_intensidade(self) -> None:
         """Camada INFERENCIA: a IA pode devolver algo mais rico que sim/não."""
@@ -187,12 +227,12 @@ class TestSinalAusente:
     def test_lead_parcial_soma_so_o_que_tem(self) -> None:
         resultado = calcular_score(
             {
-                "tamanho_propriedade": 775.0,  # 15 dos 30
+                "tamanho_propriedade": 775.0,  # 30 — patamar pleno (era 15 na rampa)
                 "decisor_identificavel": True,  # 20
                 "whatsapp_ativo": True,  # 15
             }
         )
-        assert resultado.score == 50
+        assert resultado.score == 65
         assert set(resultado.ausentes) == {
             "semente_sicor_cultura",
             "valor_financiado",

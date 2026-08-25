@@ -31,37 +31,36 @@ SICOR_OPERACAO_BASICA_ESTADO_{ano}.gz   1.313.316 linhas / 47 colunas
                               dá CD_CAR (bônus pro dossiê)
 ```
 
-## A chave do resultado é o DOCUMENTO, não o REF_BACEN
+## A chave do resultado é o DOCUMENTO, e vence a operação MAIS RECENTE
 
-Um ``LeadSicor`` é **um produtor**, não uma operação de crédito. Isso importa
-porque o mesmo CPF aparece em várias operações — e não só entre anos:
+Um ``LeadSicor`` é **um produtor**, não uma operação de crédito. O mesmo CPF
+aparece em várias operações — dentro de um mesmo ano (em 2026, 552
+``REF_BACEN`` no alvo correspondiam a 496 documentos distintos) e entre anos
+(198 documentos aparecem em 2025 **e** 2026). Emitir um lead por operação
+estouraria o índice único de ``Lead.documento``.
 
-- **Dentro de um único ano.** Em 2026, os 552 ``REF_BACEN`` identificados no
-  alvo correspondem a apenas **496 documentos distintos**: 56 operações
-  dividem CPF com outra. Emitir um lead por operação produziria 552 registros
-  pra 496 produtores, e a persistência da Fase 4 bateria no índice único de
-  ``Lead.documento``.
-- **Entre anos.** 198 documentos aparecem em 2025 **e** 2026.
+**Qual operação define área e valor:** a **mais recente** (maior
+``DT_EMISSAO``). Não é soma, não é máximo.
 
-Por isso a agregação final é **por documento**, aplicando a mesma regra já
-decidida pra múltiplas operações do mesmo REF_BACEN — **área = a maior**
-(é a mesma propriedade; parcelas informam áreas parciais), **valor = a soma**
-(crédito total tomado). Não é regra nova: é a mesma regra, com o escopo
-estendido de "operações do mesmo REF_BACEN" pra "operações do mesmo produtor",
-que é o que a chave de negócio sempre foi.
+⚠️ **Isso substitui a regra anterior, e a substituição foi pedida.** Até a
+calibragem, o parser usava "área = a maior, valor = a soma" entre todas as
+operações do produtor. A cliente avaliou e disse que **não faz sentido**:
+somar dois anos de custeio não descreve o produtor, descreve o histórico dele.
+A regra antiga inflava o valor de quem toma crédito todo ano e não dizia nada
+sobre a safra atual.
 
-Os números confirmam que a extensão faz sentido: valor mediano de quem aparece
-num ano só é R$ 1,0 mi, e de quem aparece nos dois é R$ 2,18 mi (≈2×, como se
-espera de dois anos de crédito — não um artefato de dupla contagem). A área
-mediana quase não muda (215 ha contra 226 ha), confirmando que ``max`` é
-estável: é a mesma propriedade nos dois anos.
+``LeadSicor.data_operacao`` guarda o ``AAAAMMDD`` da operação vencedora, pra
+regra ficar auditável no dossiê em vez de implícita.
 
-⚠️ **Interação com o score, pra decidir na Fase 4:** somar o valor entre anos
-faz quem aparece nos dois anos pontuar mais alto em ``valor_financiado``
-(peso 10) do que quem aparece num só — em parte por ser produtor maior, em
-parte só por ter aparecido duas vezes. Como a régua desse critério ainda é
-placeholder (ver ``compute_lead_score``), a calibragem tem que considerar se
-o valor usado no score é a soma ou o do ano mais recente.
+**Cultura e CAR continuam sendo a união de todas as operações** — a cliente
+falou de área e valor. São campos descritivos; restringi-los à operação mais
+recente esconderia cultura que o produtor de fato financiou.
+
+⚠️ **A operação vencedora é escolhida entre as ELEGÍVEIS** (as que passaram
+no filtro de UF e faixa de área), não entre todas as do produtor. Assim a
+área reportada continua dentro da faixa pedida. Se a cliente quiser "a última
+operação, seja qual for a área", isso é outra decisão — e mudaria o universo,
+não só o número.
 
 ## ⚠️ 70% das operações não têm mutuário — e isso NÃO é erro
 
@@ -121,10 +120,23 @@ from app.services.arquivo_utils import (
 
 logger = logging.getLogger(__name__)
 
-#: Faixa de área que interessa à Inova (hectares). Veio da Carolina como
-#: intervalo; a régua de pontuação DENTRO dela segue pendente (ver o
-#: TODO(Carolina) em app/scoring/compute_lead_score.py).
-AREA_MIN_HA_PADRAO = 150.0
+#: Faixa de área que interessa à Inova (hectares).
+#:
+#: ⚠️ O piso **tem que acompanhar** ``TAMANHO_PROPRIEDADE_HA_MIN`` do
+#: ``app.scoring.compute_lead_score``. São números com significados
+#: diferentes — um filtra a semente, o outro é o corte da régua de
+#: pontuação —, mas se o filtro cortar ACIMA do corte da régua, a faixa
+#: entre os dois vira código morto: nenhum produtor dessa faixa chega a ser
+#: pontuado, porque a semente já o descartou.
+#:
+#: Foi exatamente o que aconteceu até 25/08/2026: filtro em 150 ha contra
+#: régua calibrada em 100 ha. ``test_piso_do_filtro_acompanha_a_regua``
+#: falha se os dois divergirem de novo.
+#:
+#: Não importo a constante do ``scoring`` de propósito — ``services`` não
+#: deve depender de ``scoring`` (a seta aponta ao contrário). O teste é o
+#: que amarra os dois sem inverter a dependência.
+AREA_MIN_HA_PADRAO = 100.0
 AREA_MAX_HA_PADRAO = 1400.0
 
 #: Nome-base dos arquivos. `encontrar_arquivo` ignora caixa e testa extensões,
@@ -155,6 +167,9 @@ class LeadSicor:
     refs_bacen: tuple[str, ...] = ()
     #: Anos em que o produtor tomou crédito. Mais de um = produtor recorrente.
     anos: tuple[int, ...] = ()
+    #: ``AAAAMMDD`` da operação que forneceu ``area_ha`` e ``valor_financiado``
+    #: — a mais recente do produtor. Torna a regra auditável no dossiê.
+    data_operacao: str = ""
     #: Documento dos demais mutuários da operação (avalista, cônjuge, sócio).
     #: O lead é sempre o mutuário principal (CD_PRIMEIRO='S').
     coobrigados: tuple[str, ...] = ()
@@ -185,6 +200,22 @@ class ResultadoSicor:
     @property
     def ok(self) -> bool:
         return bool(self.leads)
+
+
+def chave_recencia(dt_emissao: str | None, ano: int) -> str:
+    """Chave ordenável de recência a partir de ``DT_EMISSAO`` (``DD/MM/AAAA``).
+
+    Devolve ``AAAAMMDD``. Data ilegível cai pro fim do ano do arquivo
+    (``AAAA0000``) — assim ela perde de qualquer operação com data válida do
+    mesmo ano, mas ainda ganha de um ano anterior. Nunca levanta.
+    """
+    bruto = (dt_emissao or "").strip()
+    partes = bruto.split("/")
+    if len(partes) == 3 and all(p.isdigit() for p in partes):
+        dia, mes, aaaa = partes
+        if len(aaaa) == 4:
+            return f"{aaaa}{mes.zfill(2)}{dia.zfill(2)}"
+    return f"{ano}0000"
 
 
 def _pular(motivo: str, etapa: str) -> dict[str, str]:
@@ -263,8 +294,8 @@ def extrair_leads_sicor(
     uf_alvo = uf.strip().upper()
 
     # --- Passo 1: uma passada por ano, acumulando por REF_BACEN -----------
-    area_por_ref: dict[str, float] = {}
-    valor_por_ref: dict[str, float] = {}
+    #: ref -> (chave_recencia, area, valor) da operação MAIS RECENTE dele.
+    recente_por_ref: dict[str, tuple[str, float, float | None]] = {}
     culturas_por_ref: dict[str, set[str]] = {}
     ops_por_ref: dict[str, int] = {}
     anos_por_ref: dict[str, set[int]] = {}
@@ -285,15 +316,16 @@ def extrair_leads_sicor(
         refs_do_ano: set[str] = set()
         try:
             with leitor_csv(arq_operacao) as (cabecalho, linhas):
-                i_ref, i_uf, i_area, i_valor, i_emp = indices_de(
+                i_ref, i_uf, i_area, i_valor, i_emp, i_dt = indices_de(
                     cabecalho,
                     "REF_BACEN",
                     "CD_ESTADO",
                     "VL_AREA_INFORMADA",
                     "VL_PARC_CREDITO",
                     "CD_EMPREENDIMENTO",
+                    "DT_EMISSAO",
                 )
-                maior = max(i_ref, i_uf, i_area, i_valor, i_emp)
+                maior = max(i_ref, i_uf, i_area, i_valor, i_emp, i_dt)
                 for linha in linhas:
                     operacoes_lidas += 1
                     if len(linha) <= maior or linha[i_uf].strip().upper() != uf_alvo:
@@ -310,12 +342,14 @@ def extrair_leads_sicor(
 
                     ref = linha[i_ref].strip()
                     refs_do_ano.add(ref)
-                    # Regra de agregação (mesma da Fase 3, agora também entre
-                    # anos): área = a MAIOR, valor = a SOMA.
-                    area_por_ref[ref] = max(area_por_ref.get(ref, 0.0), area)
+                    # Regra de agregação: a operação MAIS RECENTE vence.
+                    # Não é mais "maior área + soma de valor" — ver o
+                    # docstring do módulo sobre a decisão da cliente.
+                    chave = chave_recencia(linha[i_dt], ano)
                     valor = decimal_ou_none(linha[i_valor])
-                    if valor is not None:
-                        valor_por_ref[ref] = valor_por_ref.get(ref, 0.0) + valor
+                    anterior = recente_por_ref.get(ref)
+                    if anterior is None or chave >= anterior[0]:
+                        recente_por_ref[ref] = (chave, area, valor)
                     ops_por_ref[ref] = ops_por_ref.get(ref, 0) + 1
                     anos_por_ref.setdefault(ref, set()).add(ano)
                     if produto:
@@ -332,7 +366,7 @@ def extrair_leads_sicor(
             ano, len(refs_do_ano), uf_alvo, area_min_ha, area_max_ha,
         )
 
-    refs_alvo = set(area_por_ref)
+    refs_alvo = set(recente_por_ref)
     if not refs_alvo:
         return ResultadoSicor(
             operacoes_lidas=operacoes_lidas,
@@ -440,14 +474,17 @@ def extrair_leads_sicor(
     # A chave de negócio é o documento, não o REF_BACEN: o mesmo CPF aparece
     # em várias operações, dentro do mesmo ano e entre anos. Emitir um lead
     # por operação estouraria o índice único de Lead.documento na Fase 4.
-    # Mesma regra de sempre — área = a maior, valor = a soma —, agora no
-    # escopo do produtor.
+    #
+    # Regra de agregação (calibragem com a cliente): vence a operação MAIS
+    # RECENTE do produtor. Área e valor saem dessa operação — não são mais
+    # "maior área" nem "soma dos valores".
     por_documento: dict[str, dict] = {}
     for ref, (documento, tipo) in principais.items():
         acc = por_documento.setdefault(
             documento,
             {
                 "tipo": tipo,
+                "chave": None,
                 "area": None,
                 "valor": None,
                 "culturas": set(),
@@ -458,12 +495,17 @@ def extrair_leads_sicor(
                 "coobrigados": [],
             },
         )
-        area = area_por_ref.get(ref)
-        if area is not None:
-            acc["area"] = area if acc["area"] is None else max(acc["area"], area)
-        valor = valor_por_ref.get(ref)
-        if valor is not None:
-            acc["valor"] = valor if acc["valor"] is None else acc["valor"] + valor
+        recente = recente_por_ref.get(ref)
+        if recente is not None:
+            chave, area, valor = recente
+            if acc["chave"] is None or chave > acc["chave"]:
+                acc["chave"] = chave
+                acc["area"] = area
+                acc["valor"] = valor
+        # Cultura e CAR seguem sendo a UNIÃO de todas as operações, de
+        # propósito: a cliente falou de área e valor. São campos descritivos
+        # do dossiê, e restringi-los à operação mais recente esconderia
+        # cultura que o produtor de fato financiou.
         acc["culturas"] |= culturas_por_ref.get(ref, set())
         for car in cars_por_ref.get(ref, ()):
             if car not in acc["cars"]:
@@ -488,6 +530,7 @@ def extrair_leads_sicor(
             n_operacoes=acc["ops"],
             refs_bacen=tuple(sorted(acc["refs"])),
             anos=tuple(sorted(acc["anos"])),
+            data_operacao=acc["chave"] or "",
             coobrigados=tuple(acc["coobrigados"]),
         )
         for documento, acc in sorted(por_documento.items())

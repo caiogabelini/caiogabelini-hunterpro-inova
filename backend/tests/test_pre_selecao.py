@@ -21,6 +21,7 @@ from app.scoring.pre_selecao import (
     Candidato,
     candidato_de_estabelecimento_rfb,
     candidato_de_lead_sicor,
+    ordenar_candidatos_fase1,
     ordenar_candidatos_fase2,
     pre_selecionar,
     sinais_gratuitos_sicor,
@@ -127,19 +128,35 @@ class TestTetoDoScoreParcial:
 
 class TestFase1:
     def test_ordena_por_pontos_e_corta_na_cota(self) -> None:
+        """Ordena por pontos. Depois da calibragem, quem separa é estar
+        ACIMA do corte — não ser maior."""
         leads = [
-            lead_sicor("a", area=200.0),
-            lead_sicor("b", area=1400.0),
-            lead_sicor("c", area=800.0),
+            lead_sicor("a", area=50.0),      # abaixo do corte de 100 ha
+            lead_sicor("b", area=1400.0),    # patamar pleno
+            lead_sicor("c", area=800.0),     # patamar pleno
         ]
         r = pre_selecionar(leads, [], cota=2)
         assert [c.documento for c in r.selecionados] == ["b", "c"]
         assert r.selecionados_fase1 == 2
 
-    def test_area_maior_ganha_por_ser_o_criterio_de_peso_30(self) -> None:
-        maior_area = lead_sicor("a", area=1400.0, valor=0.0)
-        maior_valor = lead_sicor("b", area=150.0, valor=99_999_999.0)
-        r = pre_selecionar([maior_area, maior_valor], [], cota=1)
+    def test_area_NAO_ordena_mais_por_tamanho(self) -> None:
+        """⚠️ Mudança da calibragem: 200 ha e 1.400 ha EMPATAM.
+
+        Antes a rampa linear fazia a pré-seleção ranquear por hectare, ou
+        seja, por porte. A cliente disse que os dois valem o mesmo, então o
+        desempate cai pro documento (estável), não pro tamanho.
+        """
+        pequeno = lead_sicor("a", area=200.0)
+        grande = lead_sicor("b", area=1400.0)
+        r = pre_selecionar([grande, pequeno], [], cota=2)
+        pontos = {c.documento: c.pontos_parciais for c in r.selecionados}
+        assert pontos["a"] == pontos["b"]
+
+    def test_acima_do_corte_ainda_ganha_de_quem_esta_abaixo(self) -> None:
+        """O peso 30 continua dominando — o que mudou é onde está a fronteira."""
+        na_faixa = lead_sicor("a", area=150.0, valor=0.0)
+        abaixo = lead_sicor("b", area=50.0, valor=99_999_999.0)
+        r = pre_selecionar([na_faixa, abaixo], [], cota=1)
         assert r.selecionados[0].documento == "a"
 
     def test_desempate_e_estavel_entre_execucoes(self) -> None:
@@ -299,3 +316,172 @@ class TestRastroDoCorte:
         c = candidato_de_lead_sicor(lead_sicor("a"))
         with pytest.raises(AttributeError):
             c.documento = "x"  # type: ignore[misc]
+
+
+class TestMultiDonoDaMesmaPropriedade:
+    """Item confirmado com a cliente: sócios do mesmo imóvel são leads SEPARADOS.
+
+    Verificado em 25/08/2026 contra a resposta dela ("lead separado"). Não
+    exigiu ajuste — a dedup sempre foi por ``documento``, e ``codigos_car``
+    só existe como payload descritivo do dossiê. Estes testes existem pra
+    que um agrupamento por CAR introduzido sem querer no futuro falhe alto
+    em vez de fundir dois produtores num lead só.
+
+    Contexto medido na Fase 4: 387 dos 1.439 produtores (26,9%) dividem CAR
+    com outro, e 33 dos 60 selecionados. Não é caso de borda.
+    """
+
+    CAR_COMPARTILHADO = "PR4127502DE0598F4562C4542817287A3DB646538"
+
+    def _socios_do_mesmo_imovel(self) -> list[LeadSicor]:
+        return [
+            LeadSicor(
+                documento=doc,
+                tipo_beneficiario="1",
+                area_ha=1230.74,
+                valor_financiado=4_000_000.0,
+                culturas=("SOJA",),
+                codigos_car=(self.CAR_COMPARTILHADO,),
+                n_operacoes=1,
+                refs_bacen=(ref,),
+                anos=(2026,),
+            )
+            for doc, ref in (
+                ("52998224725", "111"),
+                ("11144477735", "222"),
+                ("39053344705", "333"),
+            )
+        ]
+
+    def test_tres_socios_viram_tres_candidatos(self) -> None:
+        r = pre_selecionar(self._socios_do_mesmo_imovel(), [], cota=60)
+        assert len(r.selecionados) == 3
+        assert len({c.documento for c in r.selecionados}) == 3
+
+    def test_car_compartilhado_nao_deduplica(self) -> None:
+        """A dedup é por documento. CAR igual não pode fundir ninguém."""
+        r = pre_selecionar(self._socios_do_mesmo_imovel(), [], cota=60)
+        assert r.descartados_por_dedup == 0
+        cars = {c.dados_nicho["codigos_car"][0] for c in r.selecionados}
+        assert cars == {self.CAR_COMPARTILHADO}, "todos apontam o mesmo imóvel"
+
+    def test_cada_socio_pontua_por_si(self) -> None:
+        """Nenhum deles é penalizado por dividir a propriedade."""
+        r = pre_selecionar(self._socios_do_mesmo_imovel(), [], cota=60)
+        pontos = {c.pontos_parciais for c in r.selecionados}
+        assert len(pontos) == 1 and pontos.pop() > 0
+
+    def test_cota_conta_cada_socio_como_um_lead(self) -> None:
+        """Três sócios ocupam três vagas — não uma vaga da 'propriedade'."""
+        r = pre_selecionar(self._socios_do_mesmo_imovel(), [], cota=2)
+        assert len(r.selecionados) == 2
+
+
+class TestDesempateDaFase1:
+    """O desempate que existe porque 99% da população empata no teto.
+
+    ⚠️ Critério PROVISÓRIO, não validado com a cliente — ver o docstring de
+    ``chave_desempate_fase1``. Estes testes travam o comportamento atual pra
+    a mudança ser visível quando ela opinar, não pra afirmar que está certo.
+    """
+
+    @staticmethod
+    def _lead(doc: str, data: str, recorrente: bool = False) -> Candidato:
+        """Candidato empatado em score, variando só o que desempata."""
+        return Candidato(
+            documento=doc,
+            origem=ORIGEM_SICOR,
+            nome="",
+            uf="PR",
+            municipio=None,
+            pontos_parciais=55.0,
+            dados_nicho={"data_operacao": data, "recorrente": recorrente},
+        )
+
+    def test_score_parcial_manda_acima_de_tudo(self) -> None:
+        """O desempate NÃO substitui calcular_score — só age no empate."""
+        recente_fraco = self._lead("a", "20261231")
+        object.__setattr__(recente_fraco, "pontos_parciais", 47.5)
+        antigo_forte = self._lead("z", "20200101")
+        ordenados = ordenar_candidatos_fase1([recente_fraco, antigo_forte])
+        assert [c.documento for c in ordenados] == ["z", "a"]
+
+    def test_mais_recente_vence(self) -> None:
+        ordenados = ordenar_candidatos_fase1(
+            [self._lead("a", "20250801"), self._lead("z", "20260528")]
+        )
+        assert [c.documento for c in ordenados] == ["z", "a"]
+
+    def test_mesma_data_o_recorrente_vence(self) -> None:
+        ordenados = ordenar_candidatos_fase1(
+            [
+                self._lead("a", "20260528", recorrente=False),
+                self._lead("z", "20260528", recorrente=True),
+            ]
+        )
+        assert [c.documento for c in ordenados] == ["z", "a"]
+
+    def test_tudo_igual_o_documento_desempata(self) -> None:
+        ordenados = ordenar_candidatos_fase1(
+            [self._lead("z", "20260528", True), self._lead("a", "20260528", True)]
+        )
+        assert [c.documento for c in ordenados] == ["a", "z"]
+
+    def test_ordem_e_deterministica_entre_execucoes(self) -> None:
+        """Sem determinismo, o mesmo lead entra ou sai da cota por acaso."""
+        leads = [
+            self._lead("c", "20260101", True),
+            self._lead("a", "20260101", True),
+            self._lead("b", "20250701", False),
+            self._lead("d", "", False),
+        ]
+        primeira = [c.documento for c in ordenar_candidatos_fase1(leads)]
+        segunda = [c.documento for c in ordenar_candidatos_fase1(list(reversed(leads)))]
+        terceira = [c.documento for c in ordenar_candidatos_fase1(sorted(leads, key=lambda x: x.documento, reverse=True))]
+        assert primeira == segunda == terceira
+
+    def test_sem_data_vai_pro_fim_do_grupo_de_empate(self) -> None:
+        """Candidato sem operação de crédito não pode passar na frente de
+        quem tem data conhecida — mas também não é descartado."""
+        ordenados = ordenar_candidatos_fase1(
+            [self._lead("a", ""), self._lead("z", "20200101")]
+        )
+        assert [c.documento for c in ordenados] == ["z", "a"]
+
+    def test_data_invalida_e_tratada_como_ausente(self) -> None:
+        ordenados = ordenar_candidatos_fase1(
+            [self._lead("a", "lixo"), self._lead("z", "20200101")]
+        )
+        assert [c.documento for c in ordenados] == ["z", "a"]
+
+    def test_o_desempate_muda_a_selecao_de_verdade(self) -> None:
+        """Prova que não é código morto: com cota apertada, quem entra muda.
+
+        Na ordem alfabética antiga, "a" entraria e "z" ficaria de fora. Com o
+        desempate por recência, é o contrário.
+        """
+        leads = [self._lead("a", "20200101"), self._lead("z", "20261231")]
+        r = pre_selecionar([], [], cota=1)  # sanity: não quebra vazio
+        assert r.selecionados == ()
+        ordenados = ordenar_candidatos_fase1(leads)
+        assert ordenados[0].documento == "z"
+        alfabetica = sorted(leads, key=lambda c: c.documento)
+        assert alfabetica[0].documento == "a"
+        assert ordenados[0].documento != alfabetica[0].documento
+
+    def test_candidato_do_sicor_carrega_data_operacao(self) -> None:
+        """O desempate depende desse campo chegar ao Candidato."""
+        lead = LeadSicor(
+            documento="52998224725",
+            tipo_beneficiario="1",
+            area_ha=300.0,
+            valor_financiado=500_000.0,
+            culturas=("SOJA",),
+            codigos_car=(),
+            n_operacoes=1,
+            refs_bacen=("1",),
+            anos=(2026,),
+            data_operacao="20260528",
+        )
+        c = candidato_de_lead_sicor(lead)
+        assert c.dados_nicho["data_operacao"] == "20260528"

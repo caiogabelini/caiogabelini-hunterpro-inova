@@ -170,6 +170,9 @@ def candidato_de_lead_sicor(
             "culturas": list(lead.culturas),
             "codigos_car": list(lead.codigos_car),
             "anos_credito": list(lead.anos),
+            # Data (AAAAMMDD) da operação que definiu área e valor. Usada
+            # como desempate da Fase 1 — ver `ordenar_candidatos_fase1`.
+            "data_operacao": lead.data_operacao,
             "refs_bacen": list(lead.refs_bacen),
             "n_operacoes": lead.n_operacoes,
             "recorrente": lead.recorrente,
@@ -208,15 +211,59 @@ def candidato_de_estabelecimento_rfb(est: EstabelecimentoRFB) -> Candidato:
     )
 
 
-def ordenar_candidatos_fase1(candidatos: Sequence[Candidato]) -> list[Candidato]:
-    """Maior score parcial primeiro; documento como desempate estável.
+#: Valor de ``data_operacao`` quando o candidato não tem data (o lado
+#: Receita Federal não tem operação de crédito). Ordena por último.
+_SEM_DATA = 0
 
-    O desempate por documento não é critério de negócio — existe só pra a
-    ordem ser determinística entre execuções (sem ele, dois candidatos com a
-    mesma pontuação trocariam de lugar a cada busca, e o mesmo lead entraria
-    ou sairia da cota por acaso).
+
+def chave_desempate_fase1(candidato: Candidato) -> tuple:
+    """Chave de ordenação da Fase 1: score parcial e, no empate, recência.
+
+    ⚠️ **O desempate é escolha NOSSA, não da cliente.** Mesmo espírito do
+    ``confirmado=False`` de ``SCORING_CRITERIA``: o score em si foi calibrado
+    com a Carolina, este critério secundário **não foi**. Ele existe porque
+    sem ele a Fase 1 não seleciona nada.
+
+    **O problema que ele resolve.** Depois da calibragem, as réguas de área e
+    valor viraram patamar único, e o filtro da semente já garante que todo
+    lead está dentro da faixa. Resultado medido na população real do PR
+    (2025+2026): **2.779 dos 2.806 leads empatam em 55,0 pontos** — 99%.
+    Com 60 vagas, a cota estava sendo preenchida por ordem alfabética de CPF,
+    que não é seleção, é sorteio disfarçado.
+
+    **A ordem, e por quê:**
+
+    1. ``pontos_parciais`` — o score calibrado continua mandando. Nada aqui
+       substitui ``calcular_score``; o desempate só age quando ele empata.
+    2. ``data_operacao`` mais recente primeiro — quem tomou crédito há menos
+       tempo tem mais chance de estar operando agora. É o sinal de atividade
+       mais barato que temos: já vem do arquivo, custo zero.
+    3. **recorrente** antes de não-recorrente — tomar crédito em mais de um
+       ano é indício de operação continuada, não pontual.
+    4. ``documento`` — determinismo puro, como já era. Sem ele, dois
+       candidatos idênticos trocariam de lugar entre execuções e o mesmo
+       lead entraria ou sairia da cota por acaso.
+
+    ⚠️ **Levar pra Carolina.** Recência é um palpite razoável, não a
+    preferência dela. Se ela disser que prefere, por exemplo, maior área
+    dentro da faixa, ou cultura específica de grão, é aqui que muda — e só
+    aqui, porque os pesos do score não se alteram.
     """
-    return sorted(candidatos, key=lambda c: (-c.pontos_parciais, c.documento))
+    data = candidato.dados_nicho.get("data_operacao") or ""
+    data_int = int(data) if str(data).isdigit() else _SEM_DATA
+    recorrente = bool(candidato.dados_nicho.get("recorrente"))
+    return (
+        -candidato.pontos_parciais,
+        -data_int,          # negativo = mais recente primeiro; sem data vai pro fim
+        not recorrente,     # False (0) ordena antes de True (1)
+        candidato.documento,
+    )
+
+
+def ordenar_candidatos_fase1(candidatos: Sequence[Candidato]) -> list[Candidato]:
+    """Ordena a Fase 1. Ver ``chave_desempate_fase1`` pro critério e a
+    ressalva de que o desempate não foi validado com a cliente."""
+    return sorted(candidatos, key=chave_desempate_fase1)
 
 
 def ordenar_candidatos_fase2(candidatos: Sequence[Candidato]) -> list[Candidato]:

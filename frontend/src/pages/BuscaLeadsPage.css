@@ -5,7 +5,19 @@
   margin: 0 auto;
 }
 
+/* Lavagem radial de laranja atrás do título — ambiente de marca, o mesmo
+   recurso do site oficial. ⚠️ Não é um card: este bloco fica direto sobre
+   --bg-page, então a lavagem se apoia no cinza-claro da página, não num
+   branco. Alpha baixo (0,12 no centro, transparente aos 60%%) de propósito:
+   o texto por cima continua lendo contra o fundo claro, sem depender do
+   degradê pra contraste. O padding negativo à esquerda alarga a área da
+   lavagem sem deslocar o título. */
 .busca-leads-header {
+  background-image: var(--wash-orange);
+  border-radius: 12px;
+  padding: var(--space-5) var(--space-6);
+  margin-left: calc(var(--space-6) * -1);
+  margin-right: calc(var(--space-6) * -1);
   margin-bottom: var(--space-8);
 }
 
@@ -107,13 +119,18 @@
    ação em si (rodar o pipeline) não é destrutiva, ela CRIA/atualiza
    leads -- o cuidado fica por conta do aviso acima e do modal de
    confirmação, não da cor do botão em si. */
+/* ⚠️ Degradê ACIONÁVEL (--gradient-orange-acao), não o decorativo: este
+   botão tem texto branco em cima, e o degradê claro da marca daria 2,50:1.
+   Ver tokens.css. `background-image` (não `background`) preserva o
+   `background-color` de fallback embaixo. */
 .busca-leads-btn-executar {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: var(--space-2);
   min-width: 220px;
-  background: var(--color-primary);
+  background-color: var(--color-orange-dark);
+  background-image: var(--gradient-orange-acao);
   color: #fff;
   border: none;
   border-radius: 8px;
@@ -126,7 +143,7 @@
 }
 
 .busca-leads-btn-executar:hover:not(:disabled) {
-  background: var(--color-primary-dark);
+  background-image: var(--gradient-orange-acao-hover);
   box-shadow: var(--shadow-primary-hover);
   transform: translateY(-1px);
 }

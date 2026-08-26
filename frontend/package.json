@@ -8,7 +8,8 @@
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "preview": "vite preview",
-    "test": "vitest run"
+    "test": "vitest run",
+    "checar-css": "node scripts/checar-vars-css.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

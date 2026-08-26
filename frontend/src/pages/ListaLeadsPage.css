@@ -5,7 +5,19 @@
   margin: 0 auto;
 }
 
+/* Lavagem radial de laranja atrás do título — ambiente de marca, o mesmo
+   recurso do site oficial. ⚠️ Não é um card: este bloco fica direto sobre
+   --bg-page, então a lavagem se apoia no cinza-claro da página, não num
+   branco. Alpha baixo (0,12 no centro, transparente aos 60%%) de propósito:
+   o texto por cima continua lendo contra o fundo claro, sem depender do
+   degradê pra contraste. O padding negativo à esquerda alarga a área da
+   lavagem sem deslocar o título. */
 .lista-leads-header {
+  background-image: var(--wash-orange);
+  border-radius: 12px;
+  padding: var(--space-5) var(--space-6);
+  margin-left: calc(var(--space-6) * -1);
+  margin-right: calc(var(--space-6) * -1);
   margin-bottom: var(--space-6);
 }
 

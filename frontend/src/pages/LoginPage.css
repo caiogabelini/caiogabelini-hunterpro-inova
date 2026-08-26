@@ -137,12 +137,17 @@
   margin: 0 0 var(--space-5);
 }
 
+/* ⚠️ Degradê ACIONÁVEL (--gradient-orange-acao), não o decorativo: este
+   botão tem texto branco em cima, e o degradê claro da marca daria 2,50:1.
+   Ver tokens.css. `background-image` (não `background`) preserva o
+   `background-color` de fallback embaixo. */
 .login-submit {
   display: flex;
   align-items: center;
   justify-content: center;
   gap: var(--space-2);
-  background: var(--color-primary);
+  background-color: var(--color-orange-dark);
+  background-image: var(--gradient-orange-acao);
   color: #fff;
   border: none;
   border-radius: 8px;
@@ -156,7 +161,7 @@
 }
 
 .login-submit:hover:not(:disabled) {
-  background: var(--color-primary-dark);
+  background-image: var(--gradient-orange-acao-hover);
   box-shadow: var(--shadow-primary-hover);
   transform: translateY(-1px);
 }

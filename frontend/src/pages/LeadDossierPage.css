@@ -229,13 +229,35 @@
    `align-items: flex-end`, ver `.dossier-header-score`), então a borda
    inferior acompanha exatamente a largura dos dígitos, não a largura da
    coluna toda. */
+/* ⚠️ **Não existe anel nem barra de progresso de score neste dossiê.** O
+   pedido da sessão falava em "trocar a barra/indicador de progresso" do
+   círculo de score — o que existe aqui é um NÚMERO grande com um
+   sublinhado de 3px, nunca houve círculo. O degradê foi aplicado ao
+   sublinhado, que é o único elemento cromático do bloco.
+
+   Feito com `background-image` num pseudo-elemento, e não com
+   `border-image`: borda com gradiente exige zerar as outras três bordas e
+   acertar `border-image-slice`, e quebra se alguém adicionar uma borda
+   depois. O ::after é uma faixa comum, previsível. */
 .dossier-score-total {
+  position: relative;
   font-family: var(--font-display);
   font-size: 60px;
   color: var(--color-primary);
   line-height: 1;
-  border-bottom: 3px solid var(--color-orange);
-  padding-bottom: 4px;
+  padding-bottom: 7px;
+}
+
+.dossier-score-total::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 3px;
+  border-radius: 2px;
+  /* Degradê DECORATIVO: nada branco fica por cima de uma faixa de 3px. */
+  background-image: var(--gradient-orange);
 }
 
 .dossier-score-label {
@@ -763,11 +785,16 @@
    projeto inteiro (todo botão de ação principal da tela); com o retema,
    esse papel passa pro navy, que é justamente a cor que a marca real da
    Minotto usa como principal. */
+/* ⚠️ Degradê ACIONÁVEL (--gradient-orange-acao), não o decorativo: este
+   botão tem texto branco em cima, e o degradê claro da marca daria 2,50:1.
+   Ver tokens.css. `background-image` (não `background`) preserva o
+   `background-color` de fallback embaixo. */
 .dossier-abordagem-btn-acao {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  background: var(--color-primary);
+  background-color: var(--color-orange-dark);
+  background-image: var(--gradient-orange-acao);
   color: #fff;
   border: none;
   border-radius: 8px;
@@ -781,7 +808,7 @@
 }
 
 .dossier-abordagem-btn-acao:hover {
-  background: var(--color-primary-dark);
+  background-image: var(--gradient-orange-acao-hover);
   box-shadow: var(--shadow-primary-hover);
   transform: translateY(-1px);
 }
@@ -802,8 +829,13 @@
   min-width: 40px;
 }
 
+/* ⚠️ Degradê ACIONÁVEL (--gradient-orange-acao), não o decorativo: este
+   botão tem texto branco em cima, e o degradê claro da marca daria 2,50:1.
+   Ver tokens.css. `background-image` (não `background`) preserva o
+   `background-color` de fallback embaixo. */
 .dossier-abordagem-btn {
-  background: var(--color-primary);
+  background-color: var(--color-orange-dark);
+  background-image: var(--gradient-orange-acao);
   color: #fff;
   border: none;
   border-radius: 8px;
@@ -817,7 +849,7 @@
 }
 
 .dossier-abordagem-btn:hover:not(:disabled) {
-  background: var(--color-primary-dark);
+  background-image: var(--gradient-orange-acao-hover);
   box-shadow: var(--shadow-primary-hover);
   transform: translateY(-1px);
 }

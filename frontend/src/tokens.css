@@ -26,6 +26,54 @@
   --color-orange-dark: #b45309; /* 5,02:1 contra branco — passa AA */
   --color-orange-bg: rgba(246, 135, 19, 0.14); /* fundo pastel do padrão badge */
 
+  /* --- Degradês da marca (26/08/2026) ---
+     Dois degradês de laranja, não um, e a razão é contraste — medido nesta
+     sessão, texto BRANCO sobre cada tom:
+
+         #f68713 (laranja base) ....... 2,50:1   falha até o mínimo de ícone
+         #ffa53d (laranja claro) ...... 1,96:1   falha
+         #b45309 (laranja escuro) ..... 5,02:1   passa AA de texto
+         #a04708 .......................6,18:1   passa AA de texto
+
+     Ou seja: um degradê #f68713 → #ffa53d é bonito e **não pode ter nada
+     branco em cima**. É a mesma armadilha que o token --color-orange já
+     documenta, agravada: o degradê clareia justamente onde o contraste
+     piora. */
+
+  /* Decorativo: superfície de marca onde NADA branco fica por cima —
+     lavagens de fundo, sublinhados, faixas. Nunca atrás de texto. */
+  --gradient-orange: linear-gradient(135deg, var(--color-orange) 0%, #ffa53d 100%);
+
+  /* Acionável: mesma família, ancorada no escuro pra sustentar texto e
+     ícone brancos em toda a extensão (6,18:1 → 5,02:1, ambos passam AA).
+     É este que vai em botão primário e em preenchimento com ícone branco. */
+  --gradient-orange-acao: linear-gradient(135deg, #a04708 0%, var(--color-orange-dark) 100%);
+  /* Hover do acionável: escurece os dois stops mantendo o mesmo ângulo.
+     ⚠️ A troca é INSTANTÂNEA, não animada: o CSS não interpola entre dois
+     `background-image`, só entre cores. As regras de botão mantêm
+     `transition: background-color ...` porque ela ainda vale pro
+     `background-color` de fallback — não adiante trocar por
+     `background-image` na lista, gradiente não transiciona. Animar exigiria
+     um pseudo-elemento sobreposto com opacidade, estrutura que não se
+     justifica pelo ganho. */
+  --gradient-orange-acao-hover: linear-gradient(135deg, #8a3d07 0%, #9a4708 100%);
+
+  /* ⚠️ **Não existe `--gradient-navy`, e é deliberado.** Ele chegou a ser
+     criado nesta sessão pra um degradê na sidebar, mas a sidebar é CLARA
+     por decisão de projeto (ver Sidebar.css) — e o site real da Inova
+     também usa fundo claro. Token definido e nunca usado é dívida, não
+     reserva: é a lição do SERP_API_KEY morto (§5). Se um dia houver
+     superfície navy de verdade, cria-se junto com ela. */
+
+  /* Lavagem radial de laranja pra cabeçalho de página — sobreposta ao
+     branco do card, não substituindo. Alpha baixo de propósito: é
+     ambiente, e qualquer texto por cima continua lendo contra o branco. */
+  --wash-orange: radial-gradient(
+    ellipse at top left,
+    rgba(246, 135, 19, 0.12) 0%,
+    rgba(246, 135, 19, 0) 60%
+  );
+
   /* --- Fundos --- */
   --bg-page: #f5f6fa;
   --bg-card: #ffffff;

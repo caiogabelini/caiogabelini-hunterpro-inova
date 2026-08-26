@@ -18,6 +18,8 @@ from app.services import whatsapp as whatsapp_service
 from app.workers.busca import enriquecer_selecionados, persistir_leads
 from app.workers.enriquecimento import (
     DOMINIOS_SEM_SITE_PROPRIO,
+    _dominio_do_site,
+    descobrir_site_url,
     LeadEnriquecido,
     dominio_raspavel,
     enriquecer_lead,
@@ -271,13 +273,47 @@ class TestPipelineCompleto:
         base.update(over)
         return base
 
-    def test_lead_sem_dominio_proprio_nao_raspa_site(self) -> None:
-        """Caso típico do produtor PF: e-mail de provedor gratuito."""
+    def test_nenhum_lead_tem_site_hoje(self) -> None:
+        """A etapa de site está estruturalmente parada — e isso é correto.
+
+        Até 26/08/2026 o pipeline derivava o site do domínio do e-mail. Um
+        teste real mostrou o estrago: e-mail ``@turbopro.com.br`` virou "site
+        do produtor" e a presença digital de terceiro foi pro dossiê dele.
+        Sem Google Places, a resposta honesta é pular com motivo.
+        """
         firecrawl = Fake(proibido=True)
         r = enriquecer_lead(candidato(), **self._clientes(cliente_firecrawl=firecrawl))
-        assert firecrawl.chamadas == 0
-        assert r.site_url == "" and r.presenca_digital == 0.0
-        assert any(e["etapa"] == "enrich_site_firecrawl" for e in r.etapas_puladas)
+        assert firecrawl.chamadas == 0, "não pode gastar Firecrawl sem fonte de site"
+        assert r.site_url == ""
+        assert r.presenca_digital == 0.0
+        pulada = next(e for e in r.etapas_puladas if e["etapa"] == "enrich_site_firecrawl")
+        assert "sem fonte confiável de site" in pulada["motivo"]
+
+    def test_email_corporativo_NAO_vira_mais_site(self) -> None:
+        """O caso real que motivou a remoção, travado como teste.
+
+        Um lead cujo e-mail é ``@turbopro.com.br`` não pode fazer o pipeline
+        concluir que ``https://turbopro.com.br`` é o site dele.
+        """
+        ia = Fake(proibido=True)
+        firecrawl = Fake(proibido=True)
+        r = enriquecer_lead(
+            candidato(),
+            **self._clientes(cliente_firecrawl=firecrawl, cliente_ia=ia),
+        )
+        assert r.site_url == ""
+        assert firecrawl.chamadas == 0 and ia.chamadas == 0
+
+    def test_descoberta_de_site_nao_tem_fonte_hoje(self) -> None:
+        url, motivo = descobrir_site_url(candidato())
+        assert url is None
+        assert "Google Places" in motivo
+
+    def test_dominio_so_sai_de_site_confirmado_nunca_de_email(self) -> None:
+        """A direção correta é site → domínio, não e-mail → site."""
+        assert _dominio_do_site("https://cocamar.com.br") == "cocamar.com.br"
+        assert _dominio_do_site(None) is None
+        assert _dominio_do_site("https://gmail.com") is None, "provedor não é site"
 
     def test_whatsapp_roda_mesmo_sem_site(self) -> None:
         """WhatsApp é o canal principal e não depende de site nenhum."""
@@ -369,3 +405,50 @@ class TestPrioridade:
     )
     def test_faixas(self, score, esperado) -> None:
         assert prioridade_do_score(score) == esperado
+
+
+class TestSelecaoDoScriptDeTesteReal:
+    """O teste que teria evitado o crédito gasto em 26/08/2026.
+
+    O script manual tinha uma guarda de composição (``if cnpjs and quantos
+    >= 2``) que fazia ``--leads 1`` **nunca** trazer o CNPJ — mesmo sendo ele
+    o primeiro do ranking. Como CNPJ vai pra BrasilAPI (gratuita) e CPF vai
+    pra API Full (paga), o comando recomendado pra "testar barato" era
+    exatamente o que garantia o caminho pago.
+
+    Estes testes rodam contra lista mock, sem tocar em rede nem em arquivo.
+    """
+
+    RANKING = ["CNPJ_784", "CPF_055", "CPF_060", "CPF_066"]
+
+    @staticmethod
+    def _selecionar(ranking, quantos):
+        import sys
+        from pathlib import Path
+
+        raiz = Path(__file__).resolve().parent.parent
+        if str(raiz / "scripts") not in sys.path:
+            sys.path.insert(0, str(raiz / "scripts"))
+        from teste_real_enriquecimento import selecionar_do_ranking
+
+        return selecionar_do_ranking(ranking, quantos)
+
+    def test_leads_1_traz_o_primeiro_do_ranking_mesmo_sendo_cnpj(self) -> None:
+        """O bug exato: com 1 vaga, o CNPJ do topo era descartado."""
+        assert self._selecionar(self.RANKING, 1) == ["CNPJ_784"]
+
+    def test_leads_2(self) -> None:
+        assert self._selecionar(self.RANKING, 2) == ["CNPJ_784", "CPF_055"]
+
+    def test_leads_3(self) -> None:
+        assert self._selecionar(self.RANKING, 3) == ["CNPJ_784", "CPF_055", "CPF_060"]
+
+    def test_respeita_a_ordem_do_ranking_sem_reordenar_por_tipo(self) -> None:
+        ranking = ["CPF_a", "CNPJ_b", "CPF_c"]
+        assert self._selecionar(ranking, 2) == ["CPF_a", "CNPJ_b"]
+
+    def test_pedir_mais_que_o_disponivel_nao_estoura(self) -> None:
+        assert self._selecionar(["CNPJ_784"], 5) == ["CNPJ_784"]
+
+    def test_ranking_vazio(self) -> None:
+        assert self._selecionar([], 3) == []

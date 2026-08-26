@@ -18,23 +18,29 @@ decisor      CPF → API Full (paga) | CNPJ → BrasilAPI (grátis)
 ```
 
 ⚠️ **A cadeia do Minotto começa antes: no Google Places.** Lá é ele que
-descobre o ``site_url`` a partir do nome da empresa, e todo o resto pende
-disso. O Google Places **não foi portado** — não estava no escopo pedido, e
-trazê-lo por conta própria seria justamente o tipo de decisão que precisa
-passar pelo Caio. Ver o relatório da sessão.
+descobre o ``site_url`` a partir do NOME da empresa, e todo o resto pende
+disso. O Google Places **não foi portado** — não estava no escopo pedido.
 
-Sem ele, o ``site_url`` daqui sai do **domínio do e-mail** que as fontes já
-entregam de graça: ``correio_eletronico`` no arquivo da Receita (preenchido
-em 67,3% dos CNPJ agro ativos do PR), ``email`` da BrasilAPI, e os e-mails da
-API Full. Domínio de provedor gratuito (gmail, hotmail) **não vira site** —
-não existe site em ``gmail.com``.
+⚠️ **A etapa de site está estruturalmente parada.** Até 26/08/2026 o
+pipeline derivava o site do **domínio do e-mail** do lead. Um teste real com
+produtor pessoa física mostrou que isso não se sustenta: e-mail
+``@turbopro.com.br`` virou "site do produtor", e a presença digital de uma
+empresa de terceiro foi parar no dossiê dele. A inferência foi removida —
+ver ``descobrir_site_url``.
 
-⚠️ **Consequência medida, não suposta:** o lado CPF praticamente não tem
-domínio próprio, então site/Instagram/IA quase não rodam para ele. É
-coerente com o que a Carolina disse no kickoff — presença digital é fraca
-nesse perfil — mas aqui a causa é mais dura que "o produtor não tem site":
-**não temos por onde procurar**. WhatsApp é a exceção e roda para todo
-mundo, porque o telefone vem direto do bureau.
+Consequência, e é preciso ser explícito: **sem Google Places, nenhum lead
+tem site hoje.** Isso zera, na prática, três etapas:
+
+- ``enrich_site_firecrawl`` — nada a raspar
+- ``enrich_presenca_digital`` — sem markdown, a IA não é consultada;
+  ``presenca_digital`` fica 0,0 pra todo mundo (peso 5)
+- **descoberta** de e-mail no Hunter.io — sem domínio confiável, o Hunter
+  não é consultado. A etapa de e-mail continua rodando, mas só pra
+  **validar** e-mail que a fonte já entregou (API Full, BrasilAPI), via
+  MX + ZeroBounce
+
+Sobram de pé, e cobrindo toda a população: **decisor** (peso 20) e
+**WhatsApp** (peso 15) — que é justamente o canal principal da cliente.
 
 ## ⛔ O que continua fora
 
@@ -338,15 +344,53 @@ def prioridade_do_score(score: int | None) -> str | None:
     return "BAIXA"
 
 
-def _melhor_dominio(candidato: Candidato, emails: Sequence[str]) -> str | None:
-    """Domínio raspável a partir dos e-mails já conhecidos do lead."""
-    for email in emails:
-        if "@" not in email:
-            continue
-        dominio = email.split("@")[-1].strip().lower()
-        if dominio_raspavel(dominio):
-            return dominio
-    return None
+def descobrir_site_url(candidato: Candidato) -> tuple[str | None, str]:
+    """Site do lead, **quando houver fonte confiável**. Hoje nunca há.
+
+    Devolve ``(site_url, motivo)`` — com ``site_url=None`` e o motivo pra
+    registrar em ``etapas_puladas``.
+
+    ⚠️ **Por que isto sempre devolve None hoje, e por que não é omissão.**
+
+    Até 26/08/2026 esta função não existia: o pipeline derivava o site do
+    **domínio do e-mail** do lead. Um teste real com produtor pessoa física
+    mostrou por que isso não se sustenta — o lead voltou com e-mail
+    ``@turbopro.com.br``, e o pipeline concluiu que
+    ``https://turbopro.com.br`` era o site *dele*, raspou aquele site e
+    atribuiu a presença digital daquela empresa ao produtor.
+
+    **Domínio de e-mail corporativo não prova propriedade de site.** Pode ser
+    o empregador, a cooperativa, a revenda de insumos, o escritório de
+    contabilidade — qualquer um que tenha criado o e-mail pra ele. É a mesma
+    família do ``eladiosouza@instagram.com`` do Minotto (§6), invertida: lá o
+    "site" errado gerou e-mail falso; aqui o e-mail gerou um "site" que pode
+    não ser do lead.
+
+    **A fonte legítima é o Google Places** (``websiteUri``), que descobre o
+    site pelo NOME do estabelecimento — não foi portado, e é aqui que entra
+    quando for. Enquanto não entrar, pular com motivo é a resposta honesta:
+    "não sei" é melhor que um palpite que contamina o dossiê e ainda gasta
+    Firecrawl e IA no site de terceiro.
+    """
+    return None, (
+        "sem fonte confiável de site para este lead — a descoberta por "
+        "Google Places não está no pipeline, e domínio de e-mail não prova "
+        "propriedade de site"
+    )
+
+
+def _dominio_do_site(site_url: str | None) -> str | None:
+    """Domínio de um site **já confirmado** do lead.
+
+    Mantida pro dia em que ``descobrir_site_url`` tiver fonte de verdade: a
+    direção correta é site → domínio (é o que o Minotto faz com o
+    ``websiteUri`` do Places). A direção inversa — e-mail → site — foi
+    removida, ver ``descobrir_site_url``.
+    """
+    if not site_url:
+        return None
+    dominio = site_scraping.extrair_dominio(site_url)
+    return dominio if dominio_raspavel(dominio) else None
 
 
 def enriquecer_lead(
@@ -378,21 +422,18 @@ def enriquecer_lead(
     telefones = list(base.telefones)
     emails = list(base.emails)
 
-    # --- 2. Site (Firecrawl) — só se houver domínio raspável --------------
+    # --- 2. Site (Firecrawl) — só se houver fonte confiável de site -------
+    # ⚠️ Hoje nunca há: `descobrir_site_url` devolve None com motivo. Ver o
+    # docstring dela sobre a inferência por e-mail que foi REMOVIDA.
     site_url = ""
     instagram = ""
     markdown = ""
-    dominio = _melhor_dominio(candidato, emails)
-    if dominio is None:
-        puladas.append(
-            {
-                "etapa": ETAPA_SITE,
-                "motivo": "sem domínio próprio conhecido — nada a raspar "
-                "(Google Places não está no pipeline)",
-            }
-        )
+    url_descoberta, motivo_sem_site = descobrir_site_url(candidato)
+    dominio = _dominio_do_site(url_descoberta)
+    if url_descoberta is None:
+        puladas.append({"etapa": ETAPA_SITE, "motivo": motivo_sem_site})
     else:
-        site_url = f"https://{dominio}"
+        site_url = url_descoberta
         scrape = _rodar_etapa(
             ETAPA_SITE,
             lambda: site_scraping.raspar_site(site_url, cliente=cliente_firecrawl),

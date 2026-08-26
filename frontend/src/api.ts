@@ -110,7 +110,13 @@ export interface Lead {
   tipo_documento: "CPF" | "CNPJ";
   /** Razão social (PJ) ou nome do produtor (PF). */
   nome: string;
+  /** Município principal — o da operação de crédito mais recente. */
   municipio?: string | null;
+  /** Todos os municípios do produtor, o principal primeiro. Mais de um
+   *  quando a operação mais recente cobre propriedades em municípios
+   *  diferentes (8,5% dos casos). Renderizar via `getLocalizacao`
+   *  (localizacao.ts), nunca direto — o "+N" é regra, não formatação. */
+  municipios?: string[];
   uf?: string | null;
   telefone?: string | null;
   /** ✅ Existe desde 26/08/2026 (migration `9b12f4c7d833`). Contato
@@ -153,9 +159,11 @@ export interface Lead {
    *  `calcular_score` (~7 µs/lead). Deliberado — ver o docstring de
    *  `app/api/routes/leads.py`. */
   score_detalhes?: ScoreDetalhes | null;
-  /** ⛔ Não existem — não há model `LeadMessage` nem geração de IA de
-   *  mensagem/insights nesta base (decisão da Fase 6: não portados). */
+  /** ⛔ Fantasma do Minotto: lá é um campo único sem canal, marcado
+   *  deprecated. Aqui nunca existiu — mensagem vive em `LeadMessage`, uma
+   *  linha por geração e por canal. */
   mensagem_abordagem?: string | null;
+  /** ✅ Existem desde a Fase 10, quando a geração por IA foi portada. */
   insights_ia?: InsightsIA | null;
   insights_gerado_em?: string | null;
   insights_geracoes_count?: number;

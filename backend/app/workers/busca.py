@@ -35,7 +35,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Collection, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from app.core.config import settings
@@ -45,6 +45,7 @@ from app.services.receita_federal import (
     buscar_semente_cnpj,
     encontrar_estabelecimentos,
 )
+from app.services.ibge_municipios import CacheMunicipios, municipios_dos_cars
 from app.services.sicor import ARQ_OPERACAO, encontrar_arquivo, extrair_leads_sicor
 
 logger = logging.getLogger(__name__)
@@ -119,12 +120,19 @@ def executar_busca_mensal(
     cnaes: Collection[str] = CNAES_AGRO_TODOS,
     culturas_alvo: Collection[str] | None = None,
     cota: int | None = None,
+    cache_municipios: CacheMunicipios | None = None,
 ) -> ResultadoBusca:
     """Lê as duas sementes, pré-seleciona em 2 fases e para antes do custo.
 
     ``cota`` vem de ``settings.cota_pre_selecao`` quando não informada
     (``LEADS_POR_BUSCA × LEADS_MARGEM_PRE_SELECAO``). Nunca levanta: falha
     vira ``ResultadoBusca`` com ``abortada_por`` ou ``erros`` preenchidos.
+
+    ``cache_municipios`` é injetável pelo mesmo motivo que os clientes HTTP
+    do enriquecimento: a resolução de município bate na API do IBGE, e a
+    suíte roda com rede bloqueada. Sem o parâmetro, o único jeito de testar
+    a busca completa seria afrouxar a guarda anti-rede — que existe porque
+    já queimou crédito de verdade no Minotto.
     """
     dir_sicor, dir_rfb = Path(dir_sicor), Path(dir_rfb)
     cota = settings.cota_pre_selecao if cota is None else cota
@@ -175,7 +183,16 @@ def executar_busca_mensal(
         cota,
     )
 
-    # --- 5. ⛔ PARA AQUI --------------------------------------------------
+    # --- 5. Município (IBGE) — grátis, e só nos selecionados -------------
+    # Depois do corte de propósito: ~60 resoluções, uma chamada ao IBGE.
+    pre = replace(
+        pre,
+        selecionados=tuple(
+            resolver_municipios(pre.selecionados, cache=cache_municipios)
+        ),
+    )
+
+    # --- 6. ⛔ PARA AQUI --------------------------------------------------
     # Daqui pra frente é tudo custo. Ver `enriquecer_selecionados`.
 
     return ResultadoBusca(
@@ -184,6 +201,66 @@ def executar_busca_mensal(
         leads_sicor=len(resultado_sicor.leads),
         estabelecimentos_rfb=len(resultado_rfb.estabelecimentos),
     )
+
+
+def resolver_municipios(
+    candidatos: Sequence[Candidato], *, cache: CacheMunicipios | None = None
+) -> list[Candidato]:
+    """Preenche ``municipio`` a partir do CD_CAR. Nunca levanta.
+
+    ## Onde isto roda, e por quê aqui
+
+    **Depois do corte da pré-seleção**, não durante. São ~60 resoluções por
+    busca em vez de 2.806 — e, com o cache por UF, isso significa **uma única
+    requisição ao IBGE** para o lote inteiro.
+
+    Também não roda dentro de ``app/scoring/``: aquele módulo tem que
+    continuar puro, rodando sem rede e sem sair da máquina. Município é dado
+    de apresentação, não entra em nenhum critério de score.
+
+    ## A regra dos múltiplos municípios
+
+    Vence o município da **operação mais recente** — a mesma regra que já
+    define área e valor desde a calibragem com a cliente. Não é regra nova,
+    é a mesma aplicada a mais um campo.
+
+    Sobrando mais de um distinto na operação mais recente (acontece quando
+    uma operação cobre várias propriedades), todos ficam em
+    ``dados_nicho["municipios"]`` e a tela mostra "Douradina (+1)". Medido na
+    população real: 91,5% dos produtores têm um município só; 8,5% têm 2+.
+
+    ⚠️ Se a operação mais recente não tiver CAR, cai para a união de todas as
+    operações. "Prioriza" a mais recente, não "exige" — um município antigo é
+    melhor que nenhum.
+    """
+    cache = cache or CacheMunicipios()
+    resolvidos: list[Candidato] = []
+
+    for candidato in candidatos:
+        nicho = candidato.dados_nicho or {}
+        uf = candidato.uf or ""
+        cars = nicho.get("codigos_car_recentes") or nicho.get("codigos_car") or []
+        nomes = municipios_dos_cars(cars, uf, cache) if uf else []
+        if not nomes and nicho.get("codigos_car_recentes"):
+            # A operação mais recente não rendeu nome — tenta o histórico.
+            nomes = municipios_dos_cars(nicho.get("codigos_car") or [], uf, cache)
+
+        if not nomes:
+            resolvidos.append(candidato)
+            continue
+
+        novo_nicho = dict(nicho)
+        novo_nicho["municipios"] = nomes
+        resolvidos.append(
+            replace(candidato, municipio=nomes[0], dados_nicho=novo_nicho)
+        )
+
+    com_municipio = sum(1 for c in resolvidos if c.municipio)
+    logger.info(
+        "municípios: %d de %d candidatos resolvidos (%d UF(s) consultada(s) no IBGE)",
+        com_municipio, len(resolvidos), len(cache.ufs_carregadas),
+    )
+    return resolvidos
 
 
 def enriquecer_selecionados(

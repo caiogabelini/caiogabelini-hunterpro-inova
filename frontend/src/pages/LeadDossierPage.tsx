@@ -51,6 +51,7 @@ import { formatarDocumento, rotuloDocumento, rotuloEntidade, rotuloNome } from "
 import { carregarMensagens } from "../mensagens";
 import { getDadosNicho, type DadosNichoSicor } from "../api";
 import { getContatos, temAlgumCanal } from "../contatos";
+import { getLocalizacao } from "../localizacao";
 
 type Aba = "dados" | "contatos" | "analise" | "mensagens" | "insights";
 
@@ -239,7 +240,7 @@ function DossierHeader({ lead }: { lead: Lead }) {
         </p>
 
         <p className="dossier-secundaria">
-          {lead.municipio ? `${lead.municipio}/${lead.uf ?? "—"}` : "Localização não informada"} · {NICHO_FIXO}
+          {getLocalizacao(lead).completo ?? "Localização não informada"} · {NICHO_FIXO}
         </p>
 
         {/* "Score:" saiu daqui -- o número grande no canto (dossier-header-score,
@@ -353,7 +354,7 @@ function AbaDados({ lead }: { lead: Lead }) {
               valor={formatarDocumento(lead.documento, lead.tipo_documento)}
             />
             <Campo label="Tipo" valor={rotuloEntidade(lead.tipo_documento)} />
-            <Campo label="Município/UF" valor={lead.municipio ? `${lead.municipio}/${lead.uf ?? "—"}` : null} />
+            <Campo label="Município/UF" valor={getLocalizacao(lead).completo} />
             {/* Só faz sentido pro lado CNPJ (semente da Receita Federal). */}
             <Campo label="CNAE" valor={nicho.cnae_descricao ?? nicho.cnae} />
             <Campo label="Situação cadastral" valor={nicho.situacao_cadastral} />

@@ -135,6 +135,7 @@ def montar_lead_read(lead: Lead) -> LeadRead:
         recorrente=nicho.get("recorrente"),
         anos_credito=list(nicho.get("anos_credito") or []),
         codigos_car=list(nicho.get("codigos_car") or []),
+        municipios=list(nicho.get("municipios") or []),
         n_operacoes=nicho.get("n_operacoes"),
         decisor=nicho.get("decisor"),
         whatsapp_ativo=nicho.get("whatsapp_ativo"),

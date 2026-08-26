@@ -102,6 +102,11 @@ class Settings(BaseSettings):
     #: configuração da seção 3).
     API_FULL_TOKEN: str = ""
     API_FULL_BASE_URL: str = "https://api.apifull.com.br"
+    #: API de Localidades do IBGE — **gratuita, sem autenticação**. Usada só
+    #: pra resolver código IBGE (extraído do CD_CAR do Sicor) -> nome do
+    #: município. Uma chamada por UF, cacheada em memória durante a busca.
+    IBGE_API_BASE_URL: str = "https://servicodados.ibge.gov.br"
+
     #: BrasilAPI — espelho gratuito dos Dados Abertos do CNPJ. Só CNPJ.
     BRASIL_API_BASE_URL: str = "https://brasilapi.com.br"
 

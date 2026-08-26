@@ -159,7 +159,14 @@ def candidato_de_lead_sicor(
         # do enriquecimento (BrasilAPI pra CNPJ; pra CPF, ver a ressalva do
         # pipeline sobre pessoa física).
         nome="",
-        uf=None,
+        # ⚠️ Era `uf=None` fixo até 26/08/2026, mesmo o pipeline filtrando por
+        # `CD_ESTADO` — a UF é conhecida com certeza e era descartada aqui.
+        uf=lead.uf or None,
+        # `municipio` continua None NESTE ponto de propósito: resolvê-lo exige
+        # a API do IBGE, e rede não entra em módulo de scoring (que precisa
+        # rodar puro, sem broker e sem sair da máquina). Quem preenche é
+        # `resolver_municipios` em app/workers/busca.py, DEPOIS do corte —
+        # assim são ~60 resoluções por busca, não 2.806.
         municipio=None,
         pontos_parciais=resultado.pontos,
         criterios_ausentes=resultado.ausentes,
@@ -169,6 +176,8 @@ def candidato_de_lead_sicor(
             "valor_financiado": lead.valor_financiado,
             "culturas": list(lead.culturas),
             "codigos_car": list(lead.codigos_car),
+            #: CARs só da operação mais recente — de onde o município sai.
+            "codigos_car_recentes": list(lead.codigos_car_recentes),
             "anos_credito": list(lead.anos),
             # Data (AAAAMMDD) da operação que definiu área e valor. Usada
             # como desempate da Fase 1 — ver `ordenar_candidatos_fase1`.

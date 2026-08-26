@@ -70,6 +70,10 @@ class LeadRead(BaseModel):
     recorrente: bool | None = None
     anos_credito: list[int] = []
     codigos_car: list[str] = []
+    #: Municípios do produtor, o principal primeiro. Mais de um quando a
+    #: operação mais recente cobre propriedades em municípios diferentes
+    #: (8,5% dos casos medidos) — a tela mostra "Douradina (+1)".
+    municipios: list[str] = []
     n_operacoes: int | None = None
     decisor: str | None = None
     whatsapp_ativo: bool | None = None

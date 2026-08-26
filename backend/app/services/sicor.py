@@ -163,6 +163,20 @@ class LeadSicor:
     culturas: tuple[str, ...]
     codigos_car: tuple[str, ...]
     n_operacoes: int
+    #: UF do filtro que produziu este lead. **Conhecida com certeza**: a
+    #: extração filtra por ``CD_ESTADO`` e só emite quem casou.
+    #:
+    #: ⚠️ Existe porque até 26/08/2026 essa certeza era jogada fora —
+    #: ``candidato_de_lead_sicor`` gravava ``uf=None`` fixo, e o dossiê de
+    #: todo produtor mostrava "Localização não informada" tendo a UF em mãos.
+    uf: str = ""
+    #: CD_CAR **só da operação mais recente** — a mesma que define ``area_ha``
+    #: e ``valor_financiado``. ``codigos_car`` acima continua sendo a união de
+    #: todas as operações (campo descritivo do dossiê).
+    #:
+    #: A distinção existe porque o município sai daqui: aplicar a regra da
+    #: operação mais recente a mais um campo, não inventar regra nova.
+    codigos_car_recentes: tuple[str, ...] = ()
     #: Todas as operações deste produtor, de todos os anos processados.
     refs_bacen: tuple[str, ...] = ()
     #: Anos em que o produtor tomou crédito. Mais de um = produtor recorrente.
@@ -487,6 +501,7 @@ def extrair_leads_sicor(
                 "chave": None,
                 "area": None,
                 "valor": None,
+                "ref_recente": None,
                 "culturas": set(),
                 "cars": [],
                 "refs": [],
@@ -502,6 +517,9 @@ def extrair_leads_sicor(
                 acc["chave"] = chave
                 acc["area"] = area
                 acc["valor"] = valor
+                # Guarda QUAL operação venceu, pra poder recuperar os CARs
+                # dela depois — é de onde sai o município.
+                acc["ref_recente"] = ref
         # Cultura e CAR seguem sendo a UNIÃO de todas as operações, de
         # propósito: a cliente falou de área e valor. São campos descritivos
         # do dossiê, e restringi-los à operação mais recente esconderia
@@ -527,7 +545,9 @@ def extrair_leads_sicor(
             valor_financiado=acc["valor"],
             culturas=tuple(sorted(acc["culturas"])),
             codigos_car=tuple(acc["cars"]),
+            codigos_car_recentes=tuple(cars_por_ref.get(acc["ref_recente"], ())),
             n_operacoes=acc["ops"],
+            uf=uf.strip().upper(),
             refs_bacen=tuple(sorted(acc["refs"])),
             anos=tuple(sorted(acc["anos"])),
             data_operacao=acc["chave"] or "",

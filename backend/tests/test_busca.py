@@ -156,7 +156,8 @@ class TestBuscaComRecortesReais:
 
     def test_cota_vem_da_config_quando_nao_informada(self) -> None:
         r = executar_busca_mensal(
-            dir_sicor=DIR_SICOR_AMOSTRA, dir_rfb=DIR_RFB_AMOSTRA, anos=[2026]
+            dir_sicor=DIR_SICOR_AMOSTRA, dir_rfb=DIR_RFB_AMOSTRA, anos=[2026],
+            cache_municipios=cache_ibge_offline(),
         )
         assert r.pre_selecao.cota == settings.cota_pre_selecao
 
@@ -166,6 +167,29 @@ class TestBuscaComRecortesReais:
         )
         assert r.ok
         assert r.leads_sicor == 0 and r.estabelecimentos_rfb == 0
+
+
+def cache_ibge_offline():
+    """``CacheMunicipios`` que responde sem rede.
+
+    ⚠️ A busca resolve município pela API do IBGE desde 26/08/2026. A fixture
+    ``sem_rede`` (autouse) barra isso — corretamente: ela existe porque já
+    houve chamada real acidental no Minotto. Injetar o dublê é a resposta;
+    afrouxar a guarda seria trocar a rede de proteção por conveniência.
+    """
+    import httpx
+
+    from app.services.ibge_municipios import CacheMunicipios
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=[{"id": 4127965, "nome": "Turvo"}])
+
+    return CacheMunicipios(
+        cliente=httpx.Client(
+            transport=httpx.MockTransport(handler),
+            base_url="https://servicodados.ibge.gov.br",
+        )
+    )
 
 
 class TestParaAntesDoCusto:
@@ -185,7 +209,8 @@ class TestParaAntesDoCusto:
     def test_busca_completa_nao_toca_em_fonte_paga(self) -> None:
         """A fixture de rede levantaria se alguma etapa saísse pra internet."""
         r = executar_busca_mensal(
-            dir_sicor=DIR_SICOR_AMOSTRA, dir_rfb=DIR_RFB_AMOSTRA, anos=[2026], cota=60
+            dir_sicor=DIR_SICOR_AMOSTRA, dir_rfb=DIR_RFB_AMOSTRA, anos=[2026], cota=60,
+            cache_municipios=cache_ibge_offline(),
         )
         assert r.ok
         assert all(not c.nome for c in r.selecionados if c.origem == ORIGEM_SICOR)

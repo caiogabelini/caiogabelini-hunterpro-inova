@@ -508,3 +508,48 @@ class TestPisoDoFiltroBateComARegua:
             "filtro cortando acima da régua — a faixa entre os dois nunca "
             "seria pontuada"
         )
+
+
+class TestUfELocalizacao:
+    """A UF é conhecida com certeza — a extração filtra por CD_ESTADO.
+
+    ⚠️ Regressão de uma perda real: até 26/08/2026 `candidato_de_lead_sicor`
+    gravava `uf=None` fixo, e o dossiê de todo produtor mostrava "Localização
+    não informada" com a UF em mãos.
+    """
+
+    @exige_arquivos_sicor
+    def test_lead_do_sicor_carrega_a_uf_do_filtro(self):
+        from app.services.sicor import extrair_leads_sicor
+
+        r = extrair_leads_sicor(DIR_SICOR, uf="PR", anos=[2026])
+        assert r.leads
+        assert all(lead.uf == "PR" for lead in r.leads)
+
+    @exige_arquivos_sicor
+    def test_candidato_propaga_a_uf_em_vez_de_None(self):
+        from app.scoring.pre_selecao import candidato_de_lead_sicor
+        from app.services.sicor import extrair_leads_sicor
+
+        r = extrair_leads_sicor(DIR_SICOR, uf="PR", anos=[2026])
+        candidatos = [candidato_de_lead_sicor(lead) for lead in r.leads[:50]]
+        assert all(c.uf == "PR" for c in candidatos)
+
+    @exige_arquivos_sicor
+    def test_car_da_operacao_recente_e_subconjunto_do_total(self):
+        from app.services.sicor import extrair_leads_sicor
+
+        r = extrair_leads_sicor(DIR_SICOR, uf="PR", anos=[2026])
+        com_car = [l for l in r.leads if l.codigos_car][:200]
+        assert com_car
+        for lead in com_car:
+            assert set(lead.codigos_car_recentes) <= set(lead.codigos_car)
+
+    @exige_arquivos_sicor
+    def test_uf_e_normalizada_e_nao_hardcoded(self):
+        """Parametrizada de verdade: minúscula entra, maiúscula sai."""
+        from app.services.sicor import extrair_leads_sicor
+
+        r = extrair_leads_sicor(DIR_SICOR, uf="pr", anos=[2026])
+        assert r.leads
+        assert all(lead.uf == "PR" for lead in r.leads)

@@ -43,7 +43,7 @@ import { INSIGHTS_DISPONIVEIS, getInsights } from "../insights";
 import { MENSAGEM_LIMITE_ATINGIDO, statusLimiteIa } from "../limitesIa";
 import { deveAvisarSiteNaoLido } from "../siteScrape";
 import { KANBAN_COLUMNS, STATUS_GANHO, STATUS_PERDIDO } from "../kanbanStatuses";
-import { getScoreBreakdown } from "../leadScore";
+import { criteriosExibiveis, getScoreBreakdown } from "../leadScore";
 import { SIGNAL_LAYER_LABELS } from "../scoreLayers";
 import { labelServicoFechamento } from "../servicosFechamento";
 import "./LeadDossierPage.css";
@@ -543,19 +543,27 @@ function AbaContatos({ lead }: { lead: Lead }) {
 // O bloco "hero" de score (badge de prioridade grande + número gigante
 // + brilho dourado) voltou pro cabeçalho fixo (ver DossierHeader) nesta
 // sessão -- não repetido aqui pra não duplicar o mesmo elemento visual
-// em todo lugar. Esta aba foca no que só ela tem: o breakdown dos 9
-// critérios e os "Sinais positivos" derivados dele. "Sinais positivos"
+// em todo lugar. Esta aba foca no que só ela tem: o breakdown dos
+// critérios e os "Sinais positivos" derivados dele. São 7 linhas, não 9:
+// os 2 critérios de peso 0 ficam de fora da EXIBIÇÃO (ver
+// criteriosExibiveis em leadScore.ts) -- o backend continua devolvendo
+// os 9. "Sinais positivos"
 // é reorganização do próprio breakdown, não é uma chamada de IA nova:
 // qualquer critério que bateu o peso máximo dele vira um chip.
 
 function AbaAnalise({ scoreDetalhes }: { scoreDetalhes: unknown }) {
-  const breakdown = getScoreBreakdown(scoreDetalhes);
-  // weight > 0 exclui rating_google (peso zerado a pedido do cliente --
-  // nunca deveria aparecer como "sinal positivo" de nada, mesmo que
-  // pontue 0/0). points >= weight - 0.01 tolera arredondamento de
-  // ponto flutuante vindo do backend (ex.: 6 × 20/6 pode chegar como
-  // 19.999999999998, não exatamente 20.0).
-  const sinaisPositivos = breakdown.filter((item) => item.weight > 0 && item.points >= item.weight - 0.01);
+  // `todos` guarda o que o backend mandou; `breakdown` é o que a tela
+  // mostra. A distinção importa pro estado vazio mais abaixo: "nenhum
+  // critério exibível" e "score nem calculado ainda" são coisas
+  // diferentes e não devem virar a mesma mensagem.
+  const todos = getScoreBreakdown(scoreDetalhes);
+  const breakdown = criteriosExibiveis(todos);
+  // Critérios de peso 0 já saíram no filtro acima -- nunca deveriam
+  // aparecer como "sinal positivo" de nada, mesmo pontuando 0/0.
+  // points >= weight - 0.01 tolera arredondamento de ponto flutuante
+  // vindo do backend (ex.: 6 × 20/6 pode chegar como 19.999999999998,
+  // não exatamente 20.0).
+  const sinaisPositivos = breakdown.filter((item) => item.points >= item.weight - 0.01);
 
   return (
     <section className="dossier-card dossier-analise">
@@ -591,6 +599,8 @@ function AbaAnalise({ scoreDetalhes }: { scoreDetalhes: unknown }) {
             </li>
           ))}
         </ul>
+      ) : todos.length ? (
+        <p className="dossier-muted">Nenhum critério com peso nesta versão do score.</p>
       ) : (
         <p className="dossier-muted">Score ainda não calculado pra este lead.</p>
       )}

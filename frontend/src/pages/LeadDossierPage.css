@@ -122,11 +122,13 @@
   color: var(--text-secondary);
 }
 
-/* Linha de resumo: "Classificação: ... · Prioridade: ... · Canal: ...
-   [· RQE: ...]". Cada pedaço já vem de um campo que existe (prioridade
-   mapeada pra um rótulo, canal preferido derivado de
-   whatsapp_ativo/email_validado, RQE de rqe_confirmado/rqe_fonte) --
-   nenhum dado novo. "Score: X" NÃO está mais aqui de propósito -- o
+/* Linha de resumo: "Prioridade: ... · Canal: ...". Cada pedaço vem de um
+   campo que existe (badge de prioridade, canal preferido derivado de
+   whatsapp_ativo/email_status) -- nenhum dado novo.
+
+   Dois itens JÁ SAÍRAM daqui, pela mesma razão: mostravam dado que o
+   cabeçalho já exibia. "Classificação: X" (26/08/2026) repetia a palavra
+   da própria prioridade nesta base. E "Score: X" NÃO está aqui porque o
    número grande no canto do cabeçalho (`.dossier-header-score`) já
    mostra o mesmo dado com muito mais destaque; manter os dois lado a
    lado seria redundante. RQE (`.dossier-resumo-rqe`, via

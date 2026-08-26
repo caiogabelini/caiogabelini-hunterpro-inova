@@ -194,16 +194,6 @@ export function LeadDossierPage() {
 
 // --- Cabeçalho (fixo, fora das abas) ---------------------------------------
 
-// Mapeamento simples A/B/C -> rótulo de classificação, derivado da
-// `prioridade` que já existe no lead (nenhum campo novo). "Excelente"/
-// "Bom"/"Regular" são só um rótulo mais legível pro mesmo valor que o
-// badge de prioridade já mostra.
-const CLASSIFICACAO_LABELS: Record<string, string> = {
-  A: "Excelente",
-  B: "Bom",
-  C: "Regular",
-};
-
 // Nicho é fixo pra todo lead deste projeto (produtores de grãos do PR,
 // ver docs_fundacao.md). Rótulo genérico de propósito: o mesmo texto
 // serve pro CPF (produtor pessoa física, ~98% do universo) e pro CNPJ
@@ -224,8 +214,6 @@ function canalPreferido(lead: Lead): string {
 }
 
 function DossierHeader({ lead }: { lead: Lead }) {
-  const classificacao = lead.prioridade ? CLASSIFICACAO_LABELS[lead.prioridade.toUpperCase()] ?? lead.prioridade : "—";
-
   return (
     <header className="dossier-header">
       <div className="dossier-header-principal">
@@ -247,11 +235,14 @@ function DossierHeader({ lead }: { lead: Lead }) {
             à direita) já mostra o mesmo dado com muito mais destaque
             visual; manter os dois seria redundante (julgamento pedido
             explicitamente pelo usuário nesta sessão). */}
+        {/* ⚠️ "Classificação: X" saiu daqui em 26/08/2026, pela mesma razão
+            que "Score: X" já tinha saído: mostrava o MESMO dado duas vezes.
+            No Minotto fazia sentido — lá `prioridade` é letra (A/B/C) e a
+            classificação era a tradução humana dela ("A" -> "Excelente").
+            Aqui `prioridade` já é palavra (ALTA/MEDIA/BAIXA), então o mapa
+            A/B/C nunca era atingido: caía sempre no fallback e a linha
+            renderizava "Classificação: ALTA · Prioridade: ALTA". */}
         <div className="dossier-resumo">
-          <span>
-            Classificação: <strong>{classificacao}</strong>
-          </span>
-          <span className="dossier-resumo-sep">·</span>
           <span>Prioridade: {lead.prioridade ? <PriorityBadge prioridade={lead.prioridade} /> : <strong>—</strong>}</span>
           <span className="dossier-resumo-sep">·</span>
           <span>

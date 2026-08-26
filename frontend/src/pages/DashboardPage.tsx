@@ -5,8 +5,8 @@ import {
   Funnel,
   Gauge,
   Handshake,
-  Landmark,
   ListChecks,
+  MessageCircle,
   Package,
   PartyPopper,
   Percent,
@@ -50,7 +50,11 @@ const ACAO_ICONES: Record<string, LucideIcon> = {
   decisor_identificado: UserCheck,
   prioridade_a: Target,
   revisao_manual: FileSearch,
-  divida_pgfn_nao_abordada: Landmark,
+  // ⚠️ `whatsapp_ativo_nao_abordado` SUBSTITUI o `divida_pgfn_nao_abordada`
+  // do Minotto: dívida ativa é sinal do nicho de saúde e não tem equivalente
+  // no agro (ver o backend, app/api/routes/dashboard.py). O ícone do Minotto
+  // (`Landmark`, de repartição pública) não faria sentido aqui.
+  whatsapp_ativo_nao_abordado: MessageCircle,
 };
 const ACAO_ICONE_PADRAO = ListChecks;
 

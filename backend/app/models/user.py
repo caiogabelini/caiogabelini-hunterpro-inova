@@ -5,11 +5,10 @@ Porte de ``app/models/user.py`` do Minotto. Cadastro é feito por admin via
 mesma decisão de lá, e pelo mesmo motivo — só a Inova e a 4Hands usam o
 sistema. Não há refresh token, recuperação de senha nem registro público.
 
-⚠️ Uma diferença em relação ao Minotto: lá o ``User`` carrega
-``dashboard_premissas`` (JSON), premissas do Simulador de Receita por
-usuário. **Não foi portado** — o Dashboard é escopo da Fase 8b, e uma coluna
-que ninguém lê é exatamente o tipo de dívida que o manual manda evitar
-(§5, o caso da ``SERP_API_KEY`` morta). Entra junto com a tela que a usa.
+``dashboard_premissas`` entrou na Fase 9, exatamente como o docstring da Fase
+8a previa: a coluna foi deixada de fora enquanto ninguém a lia ("entra junto
+com a tela que a usa", §5 — o caso da ``SERP_API_KEY`` morta), e a tela que a
+usa é o Simulador de Receita do Dashboard.
 """
 
 from __future__ import annotations
@@ -18,8 +17,12 @@ import uuid
 from datetime import datetime
 from enum import Enum
 
+from typing import Any
+
 from sqlalchemy import Boolean, DateTime, String
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.types import JSON
 
 from app.core.database import Base
 from app.core.tempo import agora_utc
@@ -43,6 +46,17 @@ class User(Base):
     #: Usuário inativo não loga — e o login NÃO retorna cedo por causa disso
     #: (ver `_autenticar`), pra não abrir um oráculo de tempo.
     ativo: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    #: Premissas do Simulador de Receita — ``{leads_qualificados,
+    #: taxa_fechamento, ticket_medio}``. **Por usuário**, não global: cada um
+    #: pode estar testando um cenário comercial diferente.
+    #:
+    #: ``None`` = nunca salvou; a rota devolve um padrão calculado da base
+    #: real e **não persiste esse padrão sozinha** — só quando o usuário
+    #: confirma no modal.
+    dashboard_premissas: Mapped[dict[str, Any] | None] = mapped_column(
+        JSON().with_variant(JSONB, "postgresql"), nullable=True
+    )
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=agora_utc)
 

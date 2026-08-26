@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 # Explícito aqui pra a API não depender de alguma rota importar por acaso —
 # é a lição da §6 que mordeu 3 vezes no Minotto.
 import app.models  # noqa: F401
-from app.api.routes import admin, auth, health, leads
+from app.api.routes import admin, auth, dashboard, health, leads
 from app.core.config import settings
 
 # ⚠️ /docs e /openapi.json FECHADOS fora de desenvolvimento.
@@ -55,6 +55,9 @@ app.include_router(leads.router, prefix="/api/leads", tags=["leads"])
 # ⚠️ Tudo sob /api/admin exige role=admin (ver require_admin em api/deps.py) —
 # não basta um JWT válido. É o prefixo por onde uma busca PAGA é disparada.
 app.include_router(admin.router, prefix="/api/admin", tags=["admin"])
+# Dashboard: qualquer papel autenticado (não é admin) — é a tela de trabalho
+# de quem vende. Ver o docstring de app/api/routes/dashboard.py.
+app.include_router(dashboard.router, prefix="/api/dashboard", tags=["dashboard"])
 
 
 @app.get("/")

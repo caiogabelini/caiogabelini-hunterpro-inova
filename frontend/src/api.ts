@@ -129,18 +129,23 @@ export interface Lead {
   created_at: string;
   updated_at: string;
 
-  /** ⛔ Não existe no backend. Sem esta coluna a tela de Kanban não tem o
-   *  que ler nem o que gravar. */
+  /** ✅ Existe desde a Fase 8b (migration `7a3c9d2b4e10`). `NOT NULL` no
+   *  banco com default `"novo_lead"`, então todo lead vem com coluna. Os 9
+   *  valores possíveis estão em `kanbanStatuses.ts` e há CHECK no banco. */
   kanban_status?: string;
-  /** ⛔ Não existe. Usado pelo Kanban ao marcar perda. */
+  /** ✅ Existe (Fase 8b). Só preenchido em `"perdido"`; a rota de status
+   *  **limpa** este campo ao sair dessa coluna. */
   motivo_perda?: string | null;
-  /** ⛔ Não existem. Usados pelo modal de fechamento do Kanban. */
+  /** ✅ Existem (Fase 8b). Preenchidos pelo modal de fechamento em
+   *  `"ganho"`. Diferente de `motivo_perda`, **não** são limpos ao sair de
+   *  "ganho": a venda aconteceu. */
   servicos_vendidos?: string[] | null;
   tipo_contrato?: string | null;
   valor_fechamento?: number | null;
-  /** ⛔ Não existe. O backend grava `score` (int), sem detalhamento
-   *  persistido — `calcular_score` devolve o breakdown mas
-   *  `persistir_leads` só guarda o total. */
+  /** ✅ Existe na resposta desde a Fase 8a, mas **não é coluna**: o backend
+   *  persiste só `score` (int) e recalcula o breakdown a cada resposta com
+   *  `calcular_score` (~7 µs/lead). Deliberado — ver o docstring de
+   *  `app/api/routes/leads.py`. */
   score_detalhes?: ScoreDetalhes | null;
   /** ⛔ Não existem — não há model `LeadMessage` nem geração de IA de
    *  mensagem/insights nesta base (decisão da Fase 6: não portados). */

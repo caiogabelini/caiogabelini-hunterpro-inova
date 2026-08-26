@@ -18,11 +18,13 @@ prospectar PF e PJ juntos, na mesma base, então:
 from __future__ import annotations
 
 from datetime import datetime
+from enum import Enum
 from typing import Any
 
 from sqlalchemy import (
     CheckConstraint,
     DateTime,
+    Float,
     Integer,
     String,
     Text,
@@ -53,6 +55,39 @@ UFS_BRASIL = frozenset(
     """AC AL AP AM BA CE DF ES GO MA MT MS MG PA PB PR PE PI RJ RN RS RO RR
     SC SP SE TO""".split()
 )
+
+
+class KanbanStatus(str, Enum):
+    """Colunas do funil comercial, em ordem de funil — não alfabética.
+
+    ⚠️ **Espelha ``frontend/src/kanbanStatuses.ts``**, conferido valor a valor
+    na Fase 8b. Os 9 valores são idênticos aos do Minotto: o funil comercial é
+    o mesmo, só o nicho dos leads muda. Valor novo aqui exige valor novo lá —
+    e, como há CHECK no banco (ver ``__table_args__``), também exige migration.
+
+    ``motivo_perda`` só faz sentido em ``PERDIDO``; os três campos de
+    fechamento, só em ``GANHO``. Ambos validados na rota
+    (``PATCH /api/leads/{id}/status``), não no banco — as colunas ficam
+    nullable porque só se aplicam a um status específico.
+    """
+
+    NOVO_LEAD = "novo_lead"
+    QUALIFICACAO = "qualificacao"
+    CONTATADO = "contatado"
+    RESPONDEU = "respondeu"
+    REUNIAO = "reuniao"
+    PROPOSTA_ENVIADA = "proposta_enviada"
+    NEGOCIACAO = "negociacao"
+    GANHO = "ganho"
+    PERDIDO = "perdido"
+
+
+#: Ordem de funil preservada — usada no CHECK do banco e na validação da rota.
+KANBAN_STATUS_VALIDOS: tuple[str, ...] = tuple(s.value for s in KanbanStatus)
+
+#: ``pontual`` = valor único; ``recorrente`` = valor mensal. Espelha o radio
+#: de ``FechamentoModal.tsx``.
+TIPOS_CONTRATO_VALIDOS: tuple[str, ...] = ("pontual", "recorrente")
 
 
 class Lead(Base):
@@ -118,6 +153,40 @@ class Lead(Base):
 
     observacoes: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    # --- Kanban (pipeline comercial, Fase 8b) -----------------------------
+    #: Coluna atual do quadro. ``NOT NULL`` com default na primeira coluna do
+    #: funil: um lead recém-persistido pelo pipeline já nasce no Kanban, sem
+    #: precisar que alguém o "ative". ``server_default`` além do default do
+    #: Python porque as linhas que já existem no banco precisam de valor na
+    #: migration, e porque ``persistir_leads`` grava por ``setattr`` em massa.
+    kanban_status: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        default=KanbanStatus.NOVO_LEAD.value,
+        server_default=KanbanStatus.NOVO_LEAD.value,
+        index=True,
+    )
+    #: Texto livre, só relevante quando ``kanban_status == "perdido"``.
+    #: Limpo automaticamente ao sair de "perdido" (ver a rota de status).
+    motivo_perda: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # --- Fechamento (só quando kanban_status == "ganho") ------------------
+    #: Espelha ``motivo_perda`` do lado positivo: o que foi efetivamente
+    #: vendido. Lista de strings livres — os serviços fixos que o frontend
+    #: oferece como checkbox **não** são enum aqui, e o texto digitado em
+    #: "Outro" é entrada válida. Validar as opções é papel da tela.
+    servicos_vendidos: Mapped[list[Any] | None] = mapped_column(
+        JSON().with_variant(JSONB, "postgresql"), nullable=True
+    )
+    #: "pontual" | "recorrente" — validado na rota, não no banco.
+    tipo_contrato: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    #: R$ — valor único se pontual, mensal se recorrente.
+    #:
+    #: ⚠️ ``Float`` por paridade com o Minotto, não por ser o tipo certo pra
+    #: dinheiro. Aqui só é exibido e somado pro painel; se virar base de
+    #: cálculo (comissão, faturamento), trocar por ``Numeric`` antes.
+    valor_fechamento: Mapped[float | None] = mapped_column(Float, nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=agora_utc
     )
@@ -141,6 +210,18 @@ class Lead(Base):
                 n_cnpj=TAMANHO_CNPJ,
             ),
             name="ck_leads_documento_coerente_com_tipo",
+        ),
+        # Conjunto fechado no banco, como já é feito pra `tipo_documento`.
+        # ⚠️ Trade-off assumido: coluna nova no funil passa a exigir migration
+        # (o Minotto valida só na rota e não tem esse custo). Escolhido assim
+        # porque o funil é estável, `persistir_leads` e os scripts de seed
+        # escrevem direto no model sem passar pela rota, e um status inválido
+        # gravado por um deles some do quadro sem erro nenhum.
+        CheckConstraint(
+            "kanban_status IN ({})".format(
+                ", ".join(f"'{v}'" for v in KANBAN_STATUS_VALIDOS)
+            ),
+            name="ck_leads_kanban_status_valido",
         ),
     )
 

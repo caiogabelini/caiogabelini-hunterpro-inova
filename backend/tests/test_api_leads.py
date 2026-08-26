@@ -79,10 +79,17 @@ class TestAutorizacao:
         t = create_access_token({"user_id": "nao-existe", "role": "admin"})
         assert cliente.get("/api/leads", headers={"Authorization": f"Bearer {t}"}).status_code == 401
 
-    def test_nao_existe_rota_de_escrita_nesta_fase(self, cliente, auth) -> None:
-        """Quem escreve lead é o pipeline em lote, não a API."""
+    def test_api_nao_cria_nem_apaga_lead(self, cliente, auth) -> None:
+        """Quem cria lead é o pipeline em lote (`persistir_leads`), não a API.
+
+        ⚠️ Este teste checava também que `PATCH /{id}/status` devolvia 404.
+        Deixou de checar na Fase 8b, quando a rota foi criada de propósito —
+        é a única escrita da API, e tem cobertura própria em
+        `test_api_kanban.py`. O resto do invariante continua valendo: não há
+        POST nem DELETE de lead.
+        """
         assert cliente.post("/api/leads", json={}, headers=auth).status_code in (404, 405)
-        assert cliente.patch(f"/api/leads/{CPF_VALIDO}/status", json={}, headers=auth).status_code == 404
+        assert cliente.delete(f"/api/leads/{CPF_VALIDO}", headers=auth).status_code in (404, 405)
 
 
 class TestLista:

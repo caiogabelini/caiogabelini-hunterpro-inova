@@ -1,8 +1,8 @@
 """Leitura de leads — lista, lista paginada e dossiê.
 
-⚠️ **Só leitura nesta fase.** Quem escreve lead é o pipeline em lote
-(``persistir_leads``), não a API. Não há POST/PUT/PATCH aqui: o Kanban
-(``PATCH /{id}/status``) é Fase 8b.
+⚠️ **Escrita mínima.** Quem cria lead é o pipeline em lote
+(``persistir_leads``), não a API. A única rota de escrita é o
+``PATCH /{id}/status`` do Kanban (Fase 8b) — não há POST nem DELETE.
 
 Contrato conferido contra ``frontend/src/api.ts``, que é quem define o que
 cada tela consome.
@@ -33,10 +33,15 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
 from app.core.database import get_db
-from app.models.lead import Lead
+from app.models.lead import (
+    KANBAN_STATUS_VALIDOS,
+    TIPOS_CONTRATO_VALIDOS,
+    KanbanStatus,
+    Lead,
+)
 from app.models.user import User
 from app.scoring.compute_lead_score import calcular_score
-from app.schemas.lead import LeadListaResponse, LeadRead
+from app.schemas.lead import LeadListaResponse, LeadRead, LeadStatusUpdate
 
 router = APIRouter()
 
@@ -103,6 +108,11 @@ def montar_lead_read(lead: Lead) -> LeadRead:
         etapas_puladas=lead.etapas_puladas,
         dados_nicho=nicho or None,
         observacoes=lead.observacoes,
+        kanban_status=lead.kanban_status,
+        motivo_perda=lead.motivo_perda,
+        servicos_vendidos=lead.servicos_vendidos,
+        tipo_contrato=lead.tipo_contrato,
+        valor_fechamento=lead.valor_fechamento,
         created_at=lead.created_at,
         updated_at=lead.updated_at,
         # --- desempacotado de dados_nicho ---
@@ -137,6 +147,31 @@ def montar_lead_read(lead: Lead) -> LeadRead:
     )
 
 
+def _resolver_lead(db: Session, identificador: str) -> Lead | None:
+    """Acha um lead por **id** ou por **documento**. ``None`` se não existir.
+
+    ⚠️ Aceitar os dois é deliberado (decisão da Fase 8a): o pedido falava em
+    ``/api/leads/{documento}``, mas o frontend portado navega por ``lead.id``.
+    Como CPF tem 11 dígitos e CNPJ 14, e um id de banco é bem menor, os dois
+    espaços não colidem — a checagem é por comprimento, não por adivinhação.
+
+    Extraído em função na Fase 8b porque o ``PATCH /{id}/status`` precisa da
+    mesma resolução: o Kanban manda ``lead.id``, mas nada impede que uma tela
+    futura mande o documento, e divergir aqui geraria um 404 fantasma.
+    """
+    alvo = identificador.strip()
+    digitos = "".join(c for c in alvo if c.isdigit())
+
+    lead = None
+    if len(digitos) in (11, 14):
+        lead = db.execute(
+            select(Lead).where(Lead.documento == digitos)
+        ).scalar_one_or_none()
+    if lead is None and alvo.isdigit():
+        lead = db.execute(select(Lead).where(Lead.id == int(alvo))).scalar_one_or_none()
+    return lead
+
+
 @router.get("", response_model=list[LeadRead])
 def listar_leads(
     db: Session = Depends(get_db),
@@ -159,6 +194,7 @@ def listar_leads_paginado(
     _usuario: User = Depends(get_current_user),
     busca: str | None = Query(None, description="Nome, CPF ou CNPJ"),
     prioridade: str | None = Query(None),
+    kanban_status: str | None = Query(None),
     ordenar_por: str = Query("score_total"),
     ordem: str = Query("desc"),
     pagina: int = Query(1, ge=1),
@@ -170,10 +206,10 @@ def listar_leads_paginado(
     FastAPI casa na ordem de declaração; invertido, ``/lista`` seria lido
     como um identificador e a tela quebraria com 404.
 
-    ⚠️ ``kanban_status`` existe nos parâmetros do frontend mas **não** é
-    aceito aqui: a coluna não existe (Fase 8b). Passar o filtro é ignorado
-    silenciosamente pelo FastAPI — preferível a um 422 numa tela que o
-    usuário não controla.
+    ``kanban_status`` passou a ser aceito na Fase 8b (a coluna existe desde a
+    migration ``7a3c9d2b4e10``). Valor desconhecido é **ignorado**, não vira
+    422: o filtro vem de uma tela que o usuário não controla diretamente, e
+    devolver erro ali só quebraria a lista.
     """
     consulta = select(Lead)
 
@@ -189,6 +225,9 @@ def listar_leads_paginado(
 
     if prioridade:
         consulta = consulta.where(Lead.prioridade == prioridade.strip().upper())
+
+    if kanban_status and kanban_status.strip() in KANBAN_STATUS_VALIDOS:
+        consulta = consulta.where(Lead.kanban_status == kanban_status.strip())
 
     total = db.execute(
         select(func.count()).select_from(consulta.subquery())
@@ -224,19 +263,107 @@ def obter_lead(
     espaços não colidem na prática — e a checagem abaixo é por comprimento,
     não por adivinhação.
     """
-    alvo = identificador.strip()
-    digitos = "".join(c for c in alvo if c.isdigit())
-
-    lead = None
-    if len(digitos) in (11, 14):
-        lead = db.execute(
-            select(Lead).where(Lead.documento == digitos)
-        ).scalar_one_or_none()
-    if lead is None and alvo.isdigit():
-        lead = db.execute(select(Lead).where(Lead.id == int(alvo))).scalar_one_or_none()
-
+    lead = _resolver_lead(db, identificador)
     if lead is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Lead não encontrado"
         )
+    return montar_lead_read(lead)
+
+
+@router.patch("/{lead_id}/status", response_model=LeadRead)
+def atualizar_status_lead(
+    lead_id: str,
+    dados: LeadStatusUpdate,
+    db: Session = Depends(get_db),
+    _usuario: User = Depends(get_current_user),
+) -> LeadRead:
+    """Move um lead entre colunas do Kanban.
+
+    Exige autenticação, **qualquer papel** — mover card é o trabalho diário do
+    vendedor, não operação administrativa. Só as rotas de busca exigem admin.
+
+    ## Validação condicional
+
+    - ``perdido``  ⇒ ``motivo_perda`` obrigatório.
+    - ``ganho``    ⇒ ``servicos_vendidos`` (lista não-vazia), ``tipo_contrato``
+      e ``valor_fechamento`` (> 0) obrigatórios — o contrato de
+      ``FechamentoModal.tsx``.
+    - Qualquer outra coluna não exige nada.
+
+    Tudo validado aqui, não no banco: as colunas são nullable porque só fazem
+    sentido nesses dois status. A exceção é ``kanban_status``, que **tem**
+    CHECK no banco (ver ``app/models/lead.py``) — a validação aqui existe pra
+    devolver 422 com a lista de valores aceitos em vez de um erro de
+    integridade do Postgres.
+
+    ## O que NÃO é limpo
+
+    Sair de "perdido" limpa ``motivo_perda`` (o motivo deixou de valer). Sair
+    de "ganho" **não** limpa os campos de fechamento: uma venda que aconteceu
+    continua tendo acontecido, mesmo que o card seja movido de volta por engano
+    ou reclassificado depois. Assimetria deliberada, herdada do Minotto.
+    """
+    if dados.kanban_status not in KANBAN_STATUS_VALIDOS:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                "kanban_status inválido. Valores aceitos: "
+                f"{list(KANBAN_STATUS_VALIDOS)}"
+            ),
+        )
+
+    if dados.kanban_status == KanbanStatus.PERDIDO.value and not (
+        dados.motivo_perda and dados.motivo_perda.strip()
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="motivo_perda é obrigatório quando kanban_status é 'perdido'",
+        )
+
+    if dados.kanban_status == KanbanStatus.GANHO.value:
+        if not dados.servicos_vendidos:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    "servicos_vendidos é obrigatório (lista não-vazia) quando "
+                    "kanban_status é 'ganho'"
+                ),
+            )
+        if dados.tipo_contrato not in TIPOS_CONTRATO_VALIDOS:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    "tipo_contrato é obrigatório e deve ser um de "
+                    f"{list(TIPOS_CONTRATO_VALIDOS)} quando kanban_status é 'ganho'"
+                ),
+            )
+        if dados.valor_fechamento is None or dados.valor_fechamento <= 0:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    "valor_fechamento é obrigatório e deve ser maior que zero "
+                    "quando kanban_status é 'ganho'"
+                ),
+            )
+
+    lead = _resolver_lead(db, lead_id)
+    if lead is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Lead não encontrado"
+        )
+
+    lead.kanban_status = dados.kanban_status
+    lead.motivo_perda = (
+        dados.motivo_perda.strip()
+        if dados.kanban_status == KanbanStatus.PERDIDO.value and dados.motivo_perda
+        else None
+    )
+    if dados.kanban_status == KanbanStatus.GANHO.value:
+        lead.servicos_vendidos = list(dados.servicos_vendidos or [])
+        lead.tipo_contrato = dados.tipo_contrato
+        lead.valor_fechamento = dados.valor_fechamento
+
+    db.commit()
+    db.refresh(lead)
     return montar_lead_read(lead)

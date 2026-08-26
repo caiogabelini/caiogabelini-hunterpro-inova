@@ -76,6 +76,16 @@ class LeadRead(BaseModel):
     cnae_descricao: str | None = None
     eh_cooperativa: bool | None = None
 
+    # --- Kanban e fechamento (Fase 8b) ------------------------------------
+    #: Coluna do funil. ``NOT NULL`` no banco, então nunca vem ausente de um
+    #: lead persistido — o default do schema serve só pra montar um LeadRead
+    #: fora do banco (testes).
+    kanban_status: str = "novo_lead"
+    motivo_perda: str | None = None
+    servicos_vendidos: list[str] | None = None
+    tipo_contrato: str | None = None
+    valor_fechamento: float | None = None
+
     # --- Calculado na hora ------------------------------------------------
     score_detalhes: ScoreDetalhesRead | None = None
 
@@ -83,6 +93,28 @@ class LeadRead(BaseModel):
     @classmethod
     def _id_para_texto(cls, v: Any) -> str:
         return str(v)
+
+
+class LeadStatusUpdate(BaseModel):
+    """Corpo de ``PATCH /api/leads/{id}/status``.
+
+    ⚠️ Shape conferido contra ``updateLeadStatus`` em ``frontend/src/api.ts``:
+    a tela manda os campos de fechamento **achatados no mesmo objeto** que
+    ``kanban_status``/``motivo_perda`` (``{...dadosFechamento}``), não
+    aninhados. Um objeto aninhado aqui faria a tela receber 422 em toda venda
+    fechada.
+
+    Todos opcionais no schema de propósito. A obrigatoriedade é **condicional
+    ao status** (``motivo_perda`` só em "perdido"; os três de fechamento só em
+    "ganho"), o que Pydantic sozinho não expressa sem um validator que
+    devolveria erro pior. Validado na rota, com mensagem específica.
+    """
+
+    kanban_status: str
+    motivo_perda: str | None = None
+    servicos_vendidos: list[str] | None = None
+    tipo_contrato: str | None = None
+    valor_fechamento: float | None = None
 
 
 class LeadListaResponse(BaseModel):

@@ -58,6 +58,43 @@ class Settings(BaseSettings):
     #: candidatos se revelam inaproveitáveis depois do corte.
     LEADS_MARGEM_PRE_SELECAO: float = 1.2
 
+    # --- Fontes locais da busca (arquivos baixados manualmente) ----------
+    #: Diretórios das duas sementes gratuitas. São arquivos grandes (centenas
+    #: de MB), baixados à mão e **não versionados** — mesmo padrão do Minotto
+    #: com a PGFN. Caminhos relativos resolvem a partir de ``backend/``.
+    #:
+    #: ⚠️ Se faltarem, a busca **aborta na trava de segurança** antes de
+    #: gastar um centavo (``verificar_fontes`` em ``app/workers/busca.py``).
+    #: Isso é o comportamento desejado: o modo de falha ruim é "busca
+    #: concluída com sucesso, 0 leads", que já aconteceu no Minotto.
+    SICOR_DADOS_DIR: str = "dados_locais/sicor"
+    RFB_DADOS_DIR: str = "dados_locais/receita_federal"
+
+    #: Safras do Sicor lidas por busca, em CSV (``"2025,2026"``). Multi-ano
+    #: mede mais universo e mais recorrência; qual usar no primeiro lote real
+    #: ainda é decisão aberta da cliente, então fica configurável em vez de
+    #: fixo no código.
+    BUSCA_ANOS: str = "2025,2026"
+
+    #: UF-alvo. A Inova prospecta Paraná; parametrizável porque a orquestração
+    #: já aceita o parâmetro e travar aqui não economizaria nada.
+    BUSCA_UF: str = "PR"
+
+    @property
+    def busca_anos(self) -> tuple[int, ...]:
+        """``BUSCA_ANOS`` como tupla de inteiros, ignorando lixo.
+
+        Entrada inválida vira tupla vazia, e a trava de segurança da busca
+        aborta com motivo explícito — em vez de estourar um ValueError no
+        meio do worker, longe de quem configurou.
+        """
+        anos: list[int] = []
+        for pedaco in self.BUSCA_ANOS.split(","):
+            pedaco = pedaco.strip()
+            if pedaco.isdigit():
+                anos.append(int(pedaco))
+        return tuple(dict.fromkeys(anos))
+
     # --- Fontes pagas -----------------------------------------------------
     #: Token da API Full (bureau privado, pré-pago) — resolve nome e telefone
     #: de CPF, que é o que a BrasilAPI não faz. Vazio = etapa pulada com

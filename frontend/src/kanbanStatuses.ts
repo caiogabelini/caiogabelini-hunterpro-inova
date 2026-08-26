@@ -1,12 +1,12 @@
 // Espelha o status de funil do Kanban.
 //
-// ⚠️ No Minotto isto espelha `app/models/lead.py::KanbanStatus`. **Esse enum
-// não existe no backend da Inova** — o `Lead` da Fase 1 não tem coluna de
-// status de Kanban. A lista abaixo é o porte fiel do funil do Minotto e
-// define o contrato que o backend precisa passar a expor; enquanto a coluna
-// não existir, a tela de Kanban não tem o que ler.
+// Espelha `app/models/lead.py::KanbanStatus` — os 9 valores foram conferidos
+// um a um contra este arquivo na Fase 8b, e são idênticos aos do Minotto: o
+// funil comercial é o mesmo, só o nicho dos leads muda.
 //
-// Ordem de funil, não alfabética. Valor novo aqui exige valor novo lá.
+// Ordem de funil, não alfabética. Valor novo aqui exige valor novo lá — e,
+// como o backend tem CHECK no banco (`ck_leads_kanban_status_valido`),
+// também exige migration.
 export const KANBAN_COLUMNS: { status: string; label: string }[] = [
   { status: "novo_lead", label: "Novo Lead" },
   { status: "qualificacao", label: "Qualificação" },

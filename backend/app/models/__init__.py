@@ -12,13 +12,23 @@ explicitamente em *todos* os entrypoints — ``app/main.py``,
 ``app/workers/celery_app.py``, ``alembic/env.py`` e qualquer script de
 ``scripts/``.
 
-O ``User`` entrou na Fase 8a exatamente como previsto: uma linha aqui.
-``BuscaLeads`` e ``LeadMessage`` seguem o mesmo caminho quando as fases
-delas chegarem.
+O ``User`` entrou na Fase 8a exatamente como previsto: uma linha aqui, e o
+``BuscaLeadsRegistro`` na Fase 8b, pelo mesmo caminho. ``LeadMessage`` segue
+quando a geração por IA for portada (hoje fora de escopo, ver
+``frontend/src/mensagens.ts``).
 """
 
 from app.core.database import Base
-from app.models.lead import Lead
+from app.models.busca_leads import BuscaLeadsRegistro, StatusBusca
+from app.models.lead import KanbanStatus, Lead
 from app.models.user import User, UserRole
 
-__all__ = ["Base", "Lead", "User", "UserRole"]
+__all__ = [
+    "Base",
+    "BuscaLeadsRegistro",
+    "KanbanStatus",
+    "Lead",
+    "StatusBusca",
+    "User",
+    "UserRole",
+]

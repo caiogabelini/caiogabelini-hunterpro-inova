@@ -77,6 +77,22 @@ espera_erro "CNPJ duplicado"       "$BASE ('11222333000181','CNPJ','Outra fonte'
 espera_erro "CPF marcado as CNPJ"  "$BASE ('11144477735','CNPJ','Incoerente',now(),now());"
 espera_erro "CNPJ marcado as CPF"  "$BASE ('19012345000193','CPF','Incoerente',now(),now());"
 espera_erro "tipo fora do dominio" "$BASE ('52998224725','RG','Tipo invalido',now(),now());"
+
+# --- Fase 8b: Kanban e registro de busca ------------------------------------
+DEFAULT_KANBAN="$("${PSQL[@]}" -c "SELECT kanban_status FROM leads LIMIT 1;" | tr -d ' ')"
+if [ "$DEFAULT_KANBAN" = "novo_lead" ]; then
+  echo "ok: lead inserido sem kanban_status nasce em 'novo_lead' (server_default)"
+else
+  echo "FALHOU: kanban_status default veio '$DEFAULT_KANBAN', esperado 'novo_lead'"; exit 1
+fi
+espera_erro "kanban_status fora do funil" \
+  "UPDATE leads SET kanban_status = 'coluna_inventada' WHERE documento = '52998224725';"
+"${PSQL[@]}" -c "UPDATE leads SET kanban_status = 'ganho' WHERE documento = '52998224725';"
+echo "ok: transição pra um status válido do funil é aceita"
+
+espera_erro "busca com usuário inexistente (FK)" \
+  "INSERT INTO buscas_leads (id, iniciado_por_id, iniciado_em, status) VALUES ('b1','fantasma',now(),'executando');"
+
 "${PSQL[@]}" -c "DELETE FROM leads;" >/dev/null
 
 etapa "ETAPA 6 — autogenerate deve estar vazio (model == banco)"

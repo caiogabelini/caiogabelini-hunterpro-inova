@@ -21,6 +21,7 @@ from app.scoring.pre_selecao import (
     Candidato,
     candidato_de_estabelecimento_rfb,
     candidato_de_lead_sicor,
+    _mes_e_dia,
     ordenar_candidatos_fase1,
     ordenar_candidatos_fase2,
     pre_selecionar,
@@ -406,7 +407,7 @@ class TestDesempateDaFase1:
         ordenados = ordenar_candidatos_fase1([recente_fraco, antigo_forte])
         assert [c.documento for c in ordenados] == ["z", "a"]
 
-    def test_mais_recente_vence(self) -> None:
+    def test_mes_mais_recente_vence(self) -> None:
         ordenados = ordenar_candidatos_fase1(
             [self._lead("a", "20250801"), self._lead("z", "20260528")]
         )
@@ -485,3 +486,80 @@ class TestDesempateDaFase1:
         )
         c = candidato_de_lead_sicor(lead)
         assert c.dados_nicho["data_operacao"] == "20260528"
+
+
+class TestDesempatePorMes:
+    """Granularidade de MÊS, com recorrência dominando dentro dele.
+
+    ⚠️ Continua PROVISÓRIO: a cliente respondeu "indiferente" entre recência
+    pura e lote espalhado, e deixou a granularidade como decisão técnica —
+    não validou esta especificamente.
+
+    Motivo da troca: o desempate por dia exato concentrou os 60 selecionados
+    em 30–31/07/2026, os dois últimos dias do arquivo. Isso é coincidência de
+    corte de dados, não sinal de negócio.
+    """
+
+    _lead = staticmethod(TestDesempateDaFase1._lead)
+
+    def test_recorrencia_domina_o_dia_dentro_do_mesmo_mes(self) -> None:
+        """O ponto central da mudança: quem é recorrente passa na frente
+        mesmo tendo fechado crédito 30 dias ANTES, no mesmo mês."""
+        ordenados = ordenar_candidatos_fase1(
+            [
+                self._lead("ultimo_dia", "20260731", recorrente=False),
+                self._lead("primeiro_dia", "20260701", recorrente=True),
+            ]
+        )
+        assert [c.documento for c in ordenados] == ["primeiro_dia", "ultimo_dia"]
+
+    def test_mes_manda_acima_da_recorrencia(self) -> None:
+        """Mês é o nível 2; recorrência é o 3. Julho não-recorrente ganha de
+        junho recorrente."""
+        ordenados = ordenar_candidatos_fase1(
+            [
+                self._lead("junho_rec", "20260630", recorrente=True),
+                self._lead("julho_naorec", "20260701", recorrente=False),
+            ]
+        )
+        assert [c.documento for c in ordenados] == ["julho_naorec", "junho_rec"]
+
+    def test_dia_exato_ainda_desempata_dentro_do_mes_e_da_recorrencia(self) -> None:
+        """Nível 4: mesmo mês, mesma recorrência — aí o dia decide."""
+        ordenados = ordenar_candidatos_fase1(
+            [
+                self._lead("a", "20260701", recorrente=True),
+                self._lead("b", "20260715", recorrente=True),
+            ]
+        )
+        assert [c.documento for c in ordenados] == ["b", "a"]
+
+    def test_dias_diferentes_do_mesmo_mes_nao_separam_recorrencia(self) -> None:
+        """Um mês inteiro de recorrentes vem antes de qualquer não-recorrente
+        do mesmo mês — é isso que espalha o lote."""
+        leads = [
+            self._lead("nr31", "20260731", recorrente=False),
+            self._lead("r01", "20260701", recorrente=True),
+            self._lead("nr30", "20260730", recorrente=False),
+            self._lead("r15", "20260715", recorrente=True),
+        ]
+        ordem = [c.documento for c in ordenar_candidatos_fase1(leads)]
+        assert ordem == ["r15", "r01", "nr31", "nr30"]
+
+    def test_extracao_de_mes(self) -> None:
+        assert _mes_e_dia("20260731") == (202607, 20260731)
+        assert _mes_e_dia("") == (0, 0)
+        assert _mes_e_dia(None) == (0, 0)
+        assert _mes_e_dia("lixo") == (0, 0)
+        assert _mes_e_dia("2026") == (0, 0), "curto demais pra ter mês"
+
+    def test_ordem_continua_deterministica(self) -> None:
+        leads = [
+            self._lead("c", "20260715", True),
+            self._lead("a", "20260715", True),
+            self._lead("b", "20260601", False),
+            self._lead("d", "", False),
+        ]
+        primeira = [c.documento for c in ordenar_candidatos_fase1(leads)]
+        segunda = [c.documento for c in ordenar_candidatos_fase1(list(reversed(leads)))]
+        assert primeira == segunda

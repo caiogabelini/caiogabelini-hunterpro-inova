@@ -211,9 +211,17 @@ def candidato_de_estabelecimento_rfb(est: EstabelecimentoRFB) -> Candidato:
     )
 
 
-#: Valor de ``data_operacao`` quando o candidato não tem data (o lado
+#: Valor de ``data_operacao``/mês quando o candidato não tem data (o lado
 #: Receita Federal não tem operação de crédito). Ordena por último.
 _SEM_DATA = 0
+
+
+def _mes_e_dia(data_operacao: object) -> tuple[int, int]:
+    """``"20260731"`` → ``(202607, 20260731)``. Sem data → ``(0, 0)``."""
+    bruto = str(data_operacao or "")
+    if not bruto.isdigit() or len(bruto) < 6:
+        return _SEM_DATA, _SEM_DATA
+    return int(bruto[:6]), int(bruto)
 
 
 def chave_desempate_fase1(candidato: Candidato) -> tuple:
@@ -221,41 +229,54 @@ def chave_desempate_fase1(candidato: Candidato) -> tuple:
 
     ⚠️ **O desempate é escolha NOSSA, não da cliente.** Mesmo espírito do
     ``confirmado=False`` de ``SCORING_CRITERIA``: o score em si foi calibrado
-    com a Carolina, este critério secundário **não foi**. Ele existe porque
-    sem ele a Fase 1 não seleciona nada.
+    com a Carolina, este critério secundário **não foi** — perguntada, ela
+    respondeu "indiferente" entre recência pura e um lote mais espalhado, e
+    deixou a granularidade como decisão técnica. Ela não validou *esta*
+    granularidade especificamente.
 
     **O problema que ele resolve.** Depois da calibragem, as réguas de área e
     valor viraram patamar único, e o filtro da semente já garante que todo
     lead está dentro da faixa. Resultado medido na população real do PR
     (2025+2026): **2.779 dos 2.806 leads empatam em 55,0 pontos** — 99%.
-    Com 60 vagas, a cota estava sendo preenchida por ordem alfabética de CPF,
-    que não é seleção, é sorteio disfarçado.
+    Com 60 vagas, a cota era preenchida por ordem alfabética de CPF, que não
+    é seleção, é sorteio disfarçado.
+
+    **Por que MÊS e não dia exato.** A primeira versão desempatava pelo dia,
+    e o efeito medido foi concentrar o lote inteiro no fim do arquivo:
+    **60 de 60 candidatos vieram de 30–31/07/2026**, os dois últimos dias
+    disponíveis. Isso é coincidência de corte de dados, não sinal de negócio
+    — um produtor não é melhor por ter fechado crédito no último dia que o
+    Bacen publicou. O mês dá uma janela representativa, e deixa a
+    **recorrência** decidir dentro dela, que é o sinal que de fato separa
+    produtor consistente de eventual.
 
     **A ordem, e por quê:**
 
     1. ``pontos_parciais`` — o score calibrado continua mandando. Nada aqui
        substitui ``calcular_score``; o desempate só age quando ele empata.
-    2. ``data_operacao`` mais recente primeiro — quem tomou crédito há menos
-       tempo tem mais chance de estar operando agora. É o sinal de atividade
-       mais barato que temos: já vem do arquivo, custo zero.
+    2. **mês** da operação (``AAAAMM``), mais recente primeiro — atividade
+       recente, sem depender do dia exato em que o arquivo foi cortado.
     3. **recorrente** antes de não-recorrente — tomar crédito em mais de um
-       ano é indício de operação continuada, não pontual.
-    4. ``documento`` — determinismo puro, como já era. Sem ele, dois
+       ano é indício de operação continuada, não pontual. É o critério
+       dominante *dentro* do mês.
+    4. ``data_operacao`` exata, mais recente primeiro — desempate fino entre
+       dois candidatos do mesmo mês e mesma recorrência.
+    5. ``documento`` — determinismo puro, como já era. Sem ele, dois
        candidatos idênticos trocariam de lugar entre execuções e o mesmo
        lead entraria ou sairia da cota por acaso.
 
-    ⚠️ **Levar pra Carolina.** Recência é um palpite razoável, não a
-    preferência dela. Se ela disser que prefere, por exemplo, maior área
-    dentro da faixa, ou cultura específica de grão, é aqui que muda — e só
-    aqui, porque os pesos do score não se alteram.
+    ⚠️ **Levar pra Carolina se ela quiser opinar depois.** Recência + mês é
+    palpite informado, não preferência dela. Se ela disser que prefere, por
+    exemplo, maior área dentro da faixa, ou cultura específica de grão, é
+    aqui que muda — e só aqui, porque os pesos do score não se alteram.
     """
-    data = candidato.dados_nicho.get("data_operacao") or ""
-    data_int = int(data) if str(data).isdigit() else _SEM_DATA
+    mes, dia = _mes_e_dia(candidato.dados_nicho.get("data_operacao"))
     recorrente = bool(candidato.dados_nicho.get("recorrente"))
     return (
         -candidato.pontos_parciais,
-        -data_int,          # negativo = mais recente primeiro; sem data vai pro fim
+        -mes,               # negativo = mês mais recente primeiro; sem data vai pro fim
         not recorrente,     # False (0) ordena antes de True (1)
+        -dia,               # desempate fino dentro do mesmo mês
         candidato.documento,
     )
 

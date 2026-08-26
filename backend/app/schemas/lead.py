@@ -89,6 +89,15 @@ class LeadRead(BaseModel):
     tipo_contrato: str | None = None
     valor_fechamento: float | None = None
 
+    # --- Insights por IA (Fase 10) ----------------------------------------
+    insights_ia: dict[str, Any] | None = None
+    insights_gerado_em: datetime | None = None
+    #: Contagem de gerações por tipo + o limite vigente, no formato que
+    #: `statusLimiteIa` (frontend) consome pra desabilitar os botões ANTES do
+    #: clique. Só preenchido nas rotas de dossiê/geração — as de lista não
+    #: calculam (seriam N consultas por página).
+    geracoes_ia: dict[str, int] | None = None
+
     # --- Calculado na hora ------------------------------------------------
     score_detalhes: ScoreDetalhesRead | None = None
 

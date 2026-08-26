@@ -39,7 +39,7 @@ import { useAuth } from "../context/AuthContext";
 import { formatarNumeroWhatsapp, formatCurrencyBRL, formatDate, formatRelative } from "../format";
 import { apenasDigitos } from "../documento";
 import { getEmailsSecundarios, labelTipoEmail } from "../emailsSecundarios";
-import { INSIGHTS_DISPONIVEIS, getInsights } from "../insights";
+import { getInsights } from "../insights";
 import { MENSAGEM_LIMITE_ATINGIDO, statusLimiteIa } from "../limitesIa";
 import { deveAvisarSiteNaoLido } from "../siteScrape";
 import { KANBAN_COLUMNS, STATUS_GANHO, STATUS_PERDIDO } from "../kanbanStatuses";
@@ -48,7 +48,7 @@ import { SIGNAL_LAYER_LABELS } from "../scoreLayers";
 import { labelServicoFechamento } from "../servicosFechamento";
 import "./LeadDossierPage.css";
 import { formatarDocumento, rotuloDocumento, rotuloEntidade, rotuloNome } from "../documento";
-import { MENSAGENS_DISPONIVEIS, carregarMensagens } from "../mensagens";
+import { carregarMensagens } from "../mensagens";
 import { getDadosNicho, type DadosNichoSicor } from "../api";
 import { getContatos, temAlgumCanal } from "../contatos";
 
@@ -646,23 +646,6 @@ function SecaoAbordagem({
   onGerada: (mensagem: LeadMessage) => void;
   geracoesIa: unknown;
 }) {
-  // ⚠️ Enquanto a geração de mensagem por IA não existir no backend, os
-  // botões abaixo bateriam em `POST /gerar-abordagem/{canal}` — que também
-  // não existe — e dariam o mesmo 404 que acabou de ser corrigido no
-  // carregamento. Melhor dizer que a funcionalidade não faz parte desta
-  // versão do que oferecer um botão que só sabe falhar.
-  if (!MENSAGENS_DISPONIVEIS) {
-    return (
-      <section className="dossier-card">
-        <SectionHeading icon={Sparkles}>Abordagem sugerida</SectionHeading>
-        <p className="dossier-muted">
-          A geração de mensagem por IA não faz parte desta versão. Os contatos
-          do lead estão na aba <strong>Contatos</strong>.
-        </p>
-      </section>
-    );
-  }
-
   const mostrarEmail = !!email;
   // WhatsApp aqui exige o sinal *confirmado ativo* (whatsapp_ativo),
   // não só ter um telefone cadastrado -- gerar mensagem pra um número
@@ -886,27 +869,6 @@ function AbaInsights({
     } finally {
       setGerando(false);
     }
-  }
-
-  // ⚠️ Mesmo tratamento dado à aba Mensagens, pelo mesmo motivo: o botão
-  // abaixo bate em `POST /gerar-insights`, que não existe nesta base, e o
-  // clique só sabe virar 404. Melhor dizer que a funcionalidade não faz
-  // parte desta versão do que oferecer um botão que só sabe falhar.
-  //
-  // O gate fica DEPOIS dos hooks de propósito -- `useAuth`/`useState` acima
-  // precisam rodar em toda renderização (regras dos hooks). Em
-  // SecaoAbordagem o equivalente pôde ficar na primeira linha porque lá o
-  // componente não tem hook próprio.
-  if (!INSIGHTS_DISPONIVEIS) {
-    return (
-      <section className="dossier-card">
-        <SectionHeading icon={Lightbulb}>Insights estratégicos</SectionHeading>
-        <p className="dossier-muted">
-          A geração de insights por IA não faz parte desta versão. A análise
-          do score do lead está na aba <strong>Análise</strong>.
-        </p>
-      </section>
-    );
   }
 
   const limite = statusLimiteIa(geracoesIa, "insights");

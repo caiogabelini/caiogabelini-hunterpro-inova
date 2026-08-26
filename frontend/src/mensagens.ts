@@ -3,22 +3,17 @@ import type { LeadMessage } from "./api";
 /**
  * A rota `GET /api/leads/{id}/mensagens` **existe no backend?**
  *
- * ⚠️ Hoje **não**. Geração de mensagem por IA foi deliberadamente deixada de
- * fora do porte (Fase 6): o `ai_enrichment.py` do Minotto tem
- * `gerar_mensagem_abordagem` e `gerar_insights_estrategicos`, e nenhuma das
- * duas foi trazida — junto com elas ficou de fora o padrão de limite de
- * geração por lead que controla o custo delas lá. Não existe model
- * `LeadMessage` nesta base, nem rota.
+ * ✅ **Sim, desde a Fase 10.** A geração por IA tinha sido deixada de fora do
+ * porte na Fase 6 e voltou: existem o model `LeadMessage`, as rotas de
+ * geração por canal e o controle de limite por lead.
  *
- * Enquanto for `false`, `carregarMensagens` devolve lista vazia **sem bater
- * na rede**. É deliberado: chamar uma rota que se sabe inexistente geraria
- * um 404 garantido a cada abertura de dossiê, para sempre — ruído no log e
- * no network tab que parece bug pra quem for investigar outra coisa.
- *
- * Quando a rota existir, trocar para `true` é a única mudança necessária —
- * o tratamento de erro isolado já está pronto embaixo.
+ * A flag continua aqui — e continua sendo o único ponto a mexer se a rota um
+ * dia sair do ar de novo. O `carregarMensagens` abaixo permanece defensivo
+ * pelo mesmo motivo de sempre: a aba Mensagens é opcional, o lead é
+ * essencial, e uma falha aqui não pode derrubar o dossiê (ver o histórico do
+ * `Promise.all` no docstring da função).
  */
-export const MENSAGENS_DISPONIVEIS = false;
+export const MENSAGENS_DISPONIVEIS = true;
 
 /**
  * Carrega as mensagens de um lead **sem nunca derrubar a tela**.

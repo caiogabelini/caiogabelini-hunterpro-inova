@@ -21,7 +21,13 @@ from app.api.deps import require_admin
 from app.core.database import get_db
 from app.core.segredos import erro_redigido
 from app.core.tempo import agora_utc
+from app.api.routes.limites_ia import (
+    TIPOS_GERACAO_IA,
+    registrar_reset,
+    resumo_geracoes,
+)
 from app.models.busca_leads import BuscaLeadsRegistro, StatusBusca
+from app.models.lead import Lead
 from app.models.user import User
 from app.schemas.busca_leads import BuscaLeadsRead
 
@@ -153,3 +159,51 @@ def obter_busca(
             status_code=status.HTTP_404_NOT_FOUND, detail="Busca não encontrada"
         )
     return registro
+
+
+@router.post("/leads/{lead_id}/resetar-limite-ia/{tipo}")
+def resetar_limite_ia(
+    lead_id: int,
+    tipo: str,
+    db: Session = Depends(get_db),
+    usuario: User = Depends(require_admin),
+) -> dict:
+    """Libera novas gerações de IA de um tipo para um lead que bateu o limite.
+
+    ⚠️ **Só admin.** É a válvula de escape do controle de custo — quem é
+    limitado não pode ser quem libera. Usuário "client" recebe 403.
+
+    ⚠️ **Não apaga histórico.** Para e-mail/WhatsApp as linhas de
+    ``lead_messages`` ficam todas onde estão; o que muda é a marca d'água em
+    ``ia_limite_resetado_em[tipo]``, e a contagem passa a considerar só as
+    gerações posteriores a ela. Para insights (que não tem histórico) o
+    contador é zerado de fato, e o carimbo fica como trilha de auditoria.
+
+    422 tipo desconhecido · 404 lead inexistente. Idempotente na prática:
+    resetar duas vezes seguidas só adianta a marca d'água.
+    """
+    if tipo not in TIPOS_GERACAO_IA:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Tipo inválido. Valores aceitos: {list(TIPOS_GERACAO_IA)}",
+        )
+
+    lead = db.get(Lead, lead_id)
+    if lead is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Lead não encontrado"
+        )
+
+    registrar_reset(lead, tipo, agora_utc())
+    db.commit()
+    db.refresh(lead)
+
+    logger.info(
+        "limite de IA (%s) do lead %s liberado pelo admin %s",
+        tipo, lead_id, usuario.email,
+    )
+    return {
+        "lead_id": str(lead.id),
+        "tipo": tipo,
+        "geracoes_ia": resumo_geracoes(db, lead),
+    }

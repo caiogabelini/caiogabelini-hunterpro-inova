@@ -120,6 +120,18 @@ class Settings(BaseSettings):
     #: ZeroBounce — validação de entregabilidade.
     ZEROBOUNCE_API_KEY: str = ""
     #: Anthropic — leitura do site por IA (presenca_digital).
+    #: Quantas gerações de IA por lead, **por tipo** (e-mail, WhatsApp,
+    #: insights), antes de exigir liberação de um admin.
+    #:
+    #: ⚠️ Controle de **custo**, não de UX: cada geração é uma chamada paga à
+    #: Anthropic, e a tela fica acessível a usuários "client".
+    #:
+    #: ``0`` ou negativo **DESLIGA** o limite em vez de bloquear tudo — mesma
+    #: convenção de ``LOGIN_MAX_TENTATIVAS`` e ``LEADS_POR_BUSCA`` (§5): o
+    #: sentido do erro numa config zerada por engano é liberar, não travar o
+    #: produto inteiro.
+    LIMITE_GERACOES_IA_POR_LEAD: int = 2
+
     ANTHROPIC_API_KEY: str = ""
     ANTHROPIC_MODEL: str = "claude-haiku-4-5-20251001"
 

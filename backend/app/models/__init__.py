@@ -13,19 +13,21 @@ explicitamente em *todos* os entrypoints — ``app/main.py``,
 ``scripts/``.
 
 O ``User`` entrou na Fase 8a exatamente como previsto: uma linha aqui, e o
-``BuscaLeadsRegistro`` na Fase 8b, pelo mesmo caminho. ``LeadMessage`` segue
-quando a geração por IA for portada (hoje fora de escopo, ver
-``frontend/src/mensagens.ts``).
+``BuscaLeadsRegistro`` na Fase 8b, pelo mesmo caminho. ``LeadMessage`` entrou na Fase 10, junto com a geração por IA.
 """
 
 from app.core.database import Base
 from app.models.busca_leads import BuscaLeadsRegistro, StatusBusca
 from app.models.lead import KanbanStatus, Lead
+from app.models.lead_message import CANAIS_VALIDOS, CanalMensagem, LeadMessage
 from app.models.user import User, UserRole
 
 __all__ = [
     "Base",
     "BuscaLeadsRegistro",
+    "CANAIS_VALIDOS",
+    "CanalMensagem",
+    "LeadMessage",
     "KanbanStatus",
     "Lead",
     "StatusBusca",

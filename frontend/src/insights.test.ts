@@ -50,9 +50,8 @@ describe("getInsights", () => {
 
 describe("INSIGHTS_DISPONIVEIS", () => {
   it("reflete o estado real do backend", () => {
-    // Mesma documentação executável de MENSAGENS_DISPONIVEIS: trocar esta
-    // flag sem a rota `POST /gerar-insights` existir devolve à tela um
-    // botão que só sabe dar 404.
-    expect(INSIGHTS_DISPONIVEIS).toBe(false);
+    // Mesma documentação executável de MENSAGENS_DISPONIVEIS: a rota
+    // `POST /gerar-insights` passou a existir na Fase 10.
+    expect(INSIGHTS_DISPONIVEIS).toBe(true);
   });
 });

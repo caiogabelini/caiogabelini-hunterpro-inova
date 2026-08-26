@@ -199,6 +199,36 @@ class Lead(Base):
     #: cálculo (comissão, faturamento), trocar por ``Numeric`` antes.
     valor_fechamento: Mapped[float | None] = mapped_column(Float, nullable=True)
 
+    # --- Insights estratégicos (IA, Fase 10) ------------------------------
+    #: Objeto de 5 campos (resumo_estrategico, potencial_oportunidade,
+    #: recomendacao_abordagem, estrategia_comunicacao, cta_sugerido) gerado
+    #: sob demanda. **Sobrescrito** a cada geração — sem histórico, ao
+    #: contrário de ``lead_messages``.
+    insights_ia: Mapped[dict[str, Any] | None] = mapped_column(
+        JSON().with_variant(JSONB, "postgresql"), nullable=True
+    )
+    insights_gerado_em: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True
+    )
+    #: ⚠️ Existe porque ``insights_ia`` é sobrescrito: sem contador não haveria
+    #: como saber quantas gerações pagas já aconteceram neste lead. E-mail e
+    #: WhatsApp não precisam disso — cada geração deles é uma linha em
+    #: ``lead_messages``, então a contagem é um ``COUNT(*)``.
+    insights_geracoes_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    #: Marca d'água de liberação do limite, por tipo:
+    #: ``{"email": "<iso>", "whatsapp": "<iso>", "insights": "<iso>"}``.
+    #:
+    #: ⚠️ Existe pra que **resetar o limite não apague histórico**. E-mail e
+    #: WhatsApp contam pelas linhas de ``lead_messages``; zerar deletando
+    #: linhas destruiria exatamente o que aquela tabela guarda. Em vez disso o
+    #: reset grava um instante, e a contagem passa a considerar só as gerações
+    #: posteriores a ele.
+    ia_limite_resetado_em: Mapped[dict[str, Any] | None] = mapped_column(
+        JSON().with_variant(JSONB, "postgresql"), nullable=True
+    )
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=agora_utc
     )

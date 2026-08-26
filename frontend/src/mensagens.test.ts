@@ -45,9 +45,9 @@ describe("carregarMensagens", () => {
   });
 
   it("o padrão do módulo reflete o estado real do backend", () => {
-    // Se alguém implementar a rota e esquecer de trocar a flag, este teste
-    // não pega — mas se alguém trocar a flag SEM a rota existir, o dossiê
-    // volta a fazer um 404 por abertura. O valor é documentação executável.
-    expect(MENSAGENS_DISPONIVEIS).toBe(false);
+    // Documentação executável: a rota `GET /api/leads/{id}/mensagens` passou
+    // a existir na Fase 10. Se ela for desligada, esta flag é o único ponto
+    // a mexer — e este teste é quem lembra disso.
+    expect(MENSAGENS_DISPONIVEIS).toBe(true);
   });
 });

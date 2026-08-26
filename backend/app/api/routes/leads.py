@@ -40,8 +40,17 @@ from app.models.lead import (
     Lead,
 )
 from app.models.user import User
+from app.api.routes.limites_ia import (
+    TIPO_INSIGHTS,
+    limite_atingido,
+    resumo_geracoes,
+)
+from app.core.tempo import agora_utc
+from app.models.lead_message import CANAIS_VALIDOS, LeadMessage
 from app.scoring.compute_lead_score import calcular_score
 from app.schemas.lead import LeadListaResponse, LeadRead, LeadStatusUpdate
+from app.schemas.lead_message import LeadMessageRead
+from app.services import ai_enrichment
 
 router = APIRouter()
 
@@ -109,6 +118,8 @@ def montar_lead_read(lead: Lead) -> LeadRead:
         etapas_puladas=lead.etapas_puladas,
         dados_nicho=nicho or None,
         observacoes=lead.observacoes,
+        insights_ia=lead.insights_ia,
+        insights_gerado_em=lead.insights_gerado_em,
         kanban_status=lead.kanban_status,
         motivo_perda=lead.motivo_perda,
         servicos_vendidos=lead.servicos_vendidos,
@@ -269,7 +280,11 @@ def obter_lead(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Lead não encontrado"
         )
-    return montar_lead_read(lead)
+    resposta = montar_lead_read(lead)
+    # Só no dossiê: as rotas de lista fariam N consultas por página pra
+    # calcular isto, e nenhuma tela de lista usa o contador.
+    resposta.geracoes_ia = resumo_geracoes(db, lead)
+    return resposta
 
 
 @router.patch("/{lead_id}/status", response_model=LeadRead)
@@ -368,3 +383,188 @@ def atualizar_status_lead(
     db.commit()
     db.refresh(lead)
     return montar_lead_read(lead)
+
+
+# --- Geração por IA (Fase 10) ----------------------------------------------
+#
+# ⚠️ **Cada rota abaixo gasta dinheiro.** A ordem das checagens não é estética:
+# canal → lead → limite → IA. O limite é verificado ANTES da chamada porque o
+# ponto dele é não gastar; validar depois não economizaria nada. E a cota só é
+# consumida DEPOIS de a geração dar certo — uma falha da IA não pode queimar
+# a tentativa do usuário.
+
+DETALHE_LIMITE_IA = (
+    "Limite de gerações atingido para este lead. "
+    "Contate um administrador para liberar mais."
+)
+
+
+def _barrar_se_limite_atingido(db: Session, lead: Lead, tipo: str) -> None:
+    """429 quando o lead já esgotou as gerações deste tipo."""
+    if limite_atingido(db, lead, tipo):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=DETALHE_LIMITE_IA
+        )
+
+
+def _dados_para_ia(lead: Lead) -> dict[str, Any]:
+    """Achata o lead no dict que os prompts consomem.
+
+    Junta coluna e ``dados_nicho`` num lugar só — os prompts não deveriam
+    precisar saber onde cada sinal mora. Mesma lição de `getContatos` no
+    frontend: um caminho de leitura, não dois.
+    """
+    nicho = lead.dados_nicho or {}
+    return {
+        "nome": lead.nome,
+        "municipio": lead.municipio,
+        "uf": lead.uf,
+        "telefone": lead.telefone,
+        "telefone_secundario": lead.telefone_secundario,
+        "email": lead.email,
+        "site": lead.site,
+        "score": lead.score,
+        "prioridade": lead.prioridade,
+        "score_detalhes": montar_lead_read(lead).score_detalhes.model_dump()
+        if lead.score is not None
+        else None,
+        "area_ha": nicho.get("area_ha"),
+        "valor_financiado": nicho.get("valor_financiado"),
+        "culturas": nicho.get("culturas"),
+        "anos_credito": nicho.get("anos_credito"),
+        "decisor": nicho.get("decisor"),
+        "fonte_decisor": nicho.get("fonte_decisor"),
+        "whatsapp_ativo": nicho.get("whatsapp_ativo"),
+        "email_status": nicho.get("email_status"),
+        "presenca_digital": nicho.get("presenca_digital"),
+        "instagram": nicho.get("instagram"),
+        "eh_cooperativa": nicho.get("eh_cooperativa"),
+    }
+
+
+@router.get("/{lead_id}/mensagens", response_model=list[LeadMessageRead])
+def listar_mensagens(
+    lead_id: str,
+    db: Session = Depends(get_db),
+    _usuario: User = Depends(get_current_user),
+) -> list[LeadMessage]:
+    """A mensagem **mais recente de cada canal**.
+
+    O histórico completo continua no banco — esta rota só entrega o que a aba
+    Mensagens mostra. 404 se o lead não existir; lista vazia se ele existe mas
+    nunca teve mensagem gerada (não é erro).
+    """
+    lead = _resolver_lead(db, lead_id)
+    if lead is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Lead não encontrado"
+        )
+
+    mensagens = db.execute(
+        select(LeadMessage)
+        .where(LeadMessage.lead_id == lead.id)
+        .order_by(LeadMessage.gerado_em.desc())
+    ).scalars().all()
+
+    vistos: set[str] = set()
+    recentes: list[LeadMessage] = []
+    for mensagem in mensagens:
+        if mensagem.canal not in vistos:
+            vistos.add(mensagem.canal)
+            recentes.append(mensagem)
+    return recentes
+
+
+@router.post("/{lead_id}/gerar-abordagem/{canal}", response_model=LeadMessageRead)
+def gerar_abordagem(
+    lead_id: str,
+    canal: str,
+    db: Session = Depends(get_db),
+    _usuario: User = Depends(get_current_user),
+) -> LeadMessage:
+    """Gera uma NOVA mensagem de abordagem — **chamada paga**.
+
+    Cria uma linha nova em ``lead_messages``; nunca sobrescreve. Requer
+    autenticação, qualquer papel (é o trabalho de quem vende).
+
+    422 canal inválido · 404 lead inexistente · 429 limite atingido ·
+    502 se a IA não devolveu nada utilizável.
+
+    ⚠️ O 502 existe para **não persistir mensagem vazia**:
+    ``gerar_mensagem_abordagem`` nunca levanta, devolve ``conteudo=""`` tanto
+    em erro de rede quanto em resposta malformada. Sem esta checagem, o
+    vendedor veria um card em branco sem saber que houve falha.
+    """
+    if canal not in CANAIS_VALIDOS:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Canal inválido. Valores aceitos: {list(CANAIS_VALIDOS)}",
+        )
+
+    lead = _resolver_lead(db, lead_id)
+    if lead is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Lead não encontrado"
+        )
+
+    _barrar_se_limite_atingido(db, lead, canal)
+
+    resultado = ai_enrichment.gerar_mensagem_abordagem(_dados_para_ia(lead), canal=canal)
+    if not resultado.conteudo:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Não foi possível gerar a mensagem agora. Tente novamente.",
+        )
+
+    mensagem = LeadMessage(
+        lead_id=lead.id,
+        canal=canal,
+        conteudo=resultado.conteudo,
+        assunto=resultado.assunto,
+    )
+    db.add(mensagem)
+    db.commit()
+    db.refresh(mensagem)
+    return mensagem
+
+
+@router.post("/{lead_id}/gerar-insights", response_model=LeadRead)
+def gerar_insights(
+    lead_id: str,
+    db: Session = Depends(get_db),
+    _usuario: User = Depends(get_current_user),
+) -> LeadRead:
+    """Gera (ou regenera) a análise estratégica — **chamada paga**.
+
+    Sobrescreve ``insights_ia``/``insights_gerado_em``: diferente das
+    mensagens, insights não mantêm histórico (cada geração substitui a
+    anterior, que é o que "Gerar novamente" significa na tela).
+
+    404 · 429 · 502, pelas mesmas razões de ``gerar_abordagem``.
+    """
+    lead = _resolver_lead(db, lead_id)
+    if lead is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Lead não encontrado"
+        )
+
+    _barrar_se_limite_atingido(db, lead, TIPO_INSIGHTS)
+
+    resultado = ai_enrichment.gerar_insights_estrategicos(_dados_para_ia(lead))
+    if not resultado:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Não foi possível gerar os insights agora. Tente novamente.",
+        )
+
+    lead.insights_ia = resultado
+    lead.insights_gerado_em = agora_utc()
+    # ⚠️ Incrementado só APÓS o 502 acima: uma geração que falhou não gasta
+    # cota do usuário.
+    lead.insights_geracoes_count = (lead.insights_geracoes_count or 0) + 1
+    db.commit()
+    db.refresh(lead)
+
+    resposta = montar_lead_read(lead)
+    resposta.geracoes_ia = resumo_geracoes(db, lead)
+    return resposta

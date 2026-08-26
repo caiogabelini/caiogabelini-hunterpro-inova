@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getInsights } from "./insights";
+import { INSIGHTS_DISPONIVEIS, getInsights } from "./insights";
 
 // Mesmo shape que gerar_insights_estrategicos devolve/persiste em
 // Lead.insights_ia (ver app/services/ai_enrichment.py).
@@ -45,5 +45,14 @@ describe("getInsights", () => {
       estrategia_comunicacao: "",
       cta_sugerido: "",
     });
+  });
+});
+
+describe("INSIGHTS_DISPONIVEIS", () => {
+  it("reflete o estado real do backend", () => {
+    // Mesma documentação executável de MENSAGENS_DISPONIVEIS: trocar esta
+    // flag sem a rota `POST /gerar-insights` existir devolve à tela um
+    // botão que só sabe dar 404.
+    expect(INSIGHTS_DISPONIVEIS).toBe(false);
   });
 });

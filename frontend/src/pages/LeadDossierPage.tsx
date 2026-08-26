@@ -39,7 +39,7 @@ import { PriorityBadge } from "../components/PriorityBadge";
 import { useAuth } from "../context/AuthContext";
 import { formatarNumeroWhatsapp, formatCurrencyBRL, formatDate, formatRelative } from "../format";
 import { getEmailsSecundarios, labelTipoEmail } from "../emailsSecundarios";
-import { getInsights } from "../insights";
+import { INSIGHTS_DISPONIVEIS, getInsights } from "../insights";
 import { MENSAGEM_LIMITE_ATINGIDO, statusLimiteIa } from "../limitesIa";
 import { deveAvisarSiteNaoLido } from "../siteScrape";
 import { KANBAN_COLUMNS, STATUS_GANHO, STATUS_PERDIDO } from "../kanbanStatuses";
@@ -48,6 +48,7 @@ import { SIGNAL_LAYER_LABELS } from "../scoreLayers";
 import { labelServicoFechamento } from "../servicosFechamento";
 import "./LeadDossierPage.css";
 import { formatarDocumento, rotuloDocumento, rotuloEntidade, rotuloNome } from "../documento";
+import { MENSAGENS_DISPONIVEIS, carregarMensagens } from "../mensagens";
 import { getDadosNicho, type DadosNichoSicor } from "../api";
 
 type Aba = "dados" | "contatos" | "analise" | "mensagens" | "insights";
@@ -55,7 +56,7 @@ type Aba = "dados" | "contatos" | "analise" | "mensagens" | "insights";
 const ABAS: { id: Aba; label: string; icon: LucideIcon }[] = [
   { id: "dados", label: "Dados", icon: FileText },
   { id: "contatos", label: "Contatos", icon: Users },
-  { id: "analise", label: "Análise IA", icon: Gauge },
+  { id: "analise", label: "Análise", icon: Gauge },
   { id: "mensagens", label: "Mensagens", icon: MessageSquare },
   { id: "insights", label: "Insights", icon: Lightbulb },
 ];
@@ -73,19 +74,45 @@ export function LeadDossierPage() {
 
   useEffect(() => {
     if (!token || !id) return;
-    Promise.all([fetchLead(token, id), fetchMensagens(token, id)])
-      .then(([leadData, mensagensData]) => {
-        setLead(leadData);
-        setMensagens(mensagensData);
+
+    // ⚠️ **Duas cargas SEPARADAS, de propósito.**
+    //
+    // Isto era um `Promise.all([fetchLead, fetchMensagens])`. Como
+    // `Promise.all` rejeita assim que qualquer promessa rejeita, o 404 de
+    // `GET /api/leads/{id}/mensagens` — rota que não existe, ver
+    // `mensagens.ts` — derrubava o resultado inteiro: a tela mostrava
+    // "Error: Not Found" para TODO lead, inclusive os que o `fetchLead`
+    // tinha devolvido com 200.
+    //
+    // O lead é ESSENCIAL: sem ele não há dossiê, e o erro é real. As
+    // mensagens são OPCIONAIS e carregam o próprio tratamento de erro, sem
+    // poder de veto sobre a tela.
+    let cancelado = false;
+
+    fetchLead(token, id)
+      .then((leadData) => {
+        if (!cancelado) setLead(leadData);
       })
       .catch((e) => {
+        if (cancelado) return;
         if (e instanceof UnauthorizedError) {
           logout();
           return;
         }
         setErro(String(e));
       })
-      .finally(() => setCarregando(false));
+      .finally(() => {
+        if (!cancelado) setCarregando(false);
+      });
+
+    // Nunca rejeita — no pior caso devolve [].
+    carregarMensagens(() => fetchMensagens(token, id)).then((m) => {
+      if (!cancelado) setMensagens(m);
+    });
+
+    return () => {
+      cancelado = true;
+    };
   }, [token, id, logout]);
 
   function registrarNovaMensagem(mensagem: LeadMessage) {
@@ -175,10 +202,14 @@ const CLASSIFICACAO_LABELS: Record<string, string> = {
   C: "Regular",
 };
 
-// Nicho é fixo pra todo lead deste projeto (consultórios/clínicas com
-// RQE, ver CLAUDE.md) -- não há campo de especialidade estruturado no
-// Lead pra derivar um texto mais específico, então não inventamos um.
-const NICHO_FIXO = "Clínica Médica";
+// Nicho é fixo pra todo lead deste projeto (produtores de grãos do PR,
+// ver docs_fundacao.md). Rótulo genérico de propósito: o mesmo texto
+// serve pro CPF (produtor pessoa física, ~98% do universo) e pro CNPJ
+// (cooperativa/empresa rural). Cultura específica (soja/milho) NÃO entra
+// aqui -- ela varia por lead e já aparece em SecaoSicor, lida de
+// `dados_nicho`; repetir no cabeçalho seria inventar um resumo que pode
+// contradizer a seção logo abaixo.
+const NICHO_FIXO = "Agronegócio";
 
 /** WhatsApp antes de e-mail -- mesma preferência já assumida no resto
  * do dossiê (a ação rápida de WhatsApp aparece antes da de e-mail na
@@ -224,7 +255,6 @@ function DossierHeader({ lead }: { lead: Lead }) {
           <span>
             Canal: <strong>{canalPreferido(lead)}</strong>
           </span>
-          <RqeResumoBadge confirmado={lead.rqe_confirmado} fonte={lead.rqe_fonte} />
         </div>
 
         <div className="dossier-header-footer">
@@ -238,10 +268,10 @@ function DossierHeader({ lead }: { lead: Lead }) {
       {/* Número de score "hero" -- de volta no canto superior direito
           do cabeçalho, do jeito que já existia antes da reestruturação
           em abas (badge de prioridade grande acima, número gigante com
-          brilho dourado, label embaixo). A aba "Análise IA" não repete
+          brilho dourado, label embaixo). A aba "Análise" não repete
           mais esse bloco (ver AbaAnalise) -- repetir seria redundante,
           já que agora ele fica visível o tempo todo aqui no cabeçalho,
-          em toda aba, não só na Análise IA. */}
+          em toda aba, não só na Análise. */}
       <div className="dossier-header-score">
         <PriorityBadge prioridade={lead.prioridade} size="lg" />
         <div className="dossier-score-total">{lead.score ?? "—"}</div>
@@ -285,14 +315,18 @@ function AbaNav({ ativa, onChange }: { ativa: Aba; onChange: (aba: Aba) => void 
 }
 
 // --- Aba "Dados" ---------------------------------------------------------
-// Mesmos 3 cards (Dados cadastrais/Contato/Presença digital) que já
-// existiam antes das abas -- só reagrupados aqui, campos inalterados.
-// Dívida ativa PGFN fica no topo da aba, antes dos cards, por ser a
-// informação mais crítica (pedido explícito). O card "RQE / Especialidade"
-// que ficava aqui como 4º card foi removido nesta sessão (sobrava
-// sozinho na última linha do grid) -- RQE virou um badge condicional na
-// linha de resumo do cabeçalho fixo (ver RqeResumoBadge), não uma seção
-// desta aba.
+// Layout, de cima pra baixo:
+//   1. SecaoSicor  -- crédito rural (área, cultura, valor, recorrência).
+//      Abre a aba por ser o sinal mais crítico DESTE nicho, mesmo lugar
+//      que a dívida ativa PGFN ocupa no Minotto (ver a nota dentro de
+//      AbaDados sobre a troca).
+//   2. dossier-grid -- 3 cards: Dados cadastrais / Contato / Presença
+//      digital. Campos inalterados em relação ao Minotto, tirando os
+//      rótulos CPF-aware (rotuloNome/rotuloDocumento/rotuloEntidade).
+//   3. SecaoFechamento -- só renderiza com kanban_status = ganho, que
+//      hoje nenhuma rota preenche (Fase 8b).
+// O 4º card "RQE / Especialidade" do Minotto não existe aqui: RQE é
+// sinal do nicho de saúde, sem equivalente no agro.
 
 function AbaDados({ lead }: { lead: Lead }) {
   const nicho = getDadosNicho(lead.dados_nicho);
@@ -392,19 +426,12 @@ function SecaoFechamento({ lead }: { lead: Lead }) {
   );
 }
 
-function RqeResumoBadge({ confirmado, fonte }: { confirmado?: boolean | null; fonte?: string | null }) {
-  if (!confirmado) return null;
-
-  const viaCnes = fonte === "cnes";
-  return (
-    <>
-      <span className="dossier-resumo-sep">·</span>
-      <span className={`dossier-resumo-rqe ${viaCnes ? "rqe-alta-confianca" : "rqe-inferencia"}`}>
-        RQE: {viaCnes ? "Confirmado via CNES" : "Inferido (site)"}
-      </span>
-    </>
-  );
-}
+// ⚠️ `RqeResumoBadge` do Minotto foi REMOVIDO nesta adaptação, mesma
+// razão de `SecaoPgfn`: RQE (Registro de Qualificação de Especialista,
+// confirmado via CNES) é sinal do nicho de saúde e não tem equivalente
+// no agro — os campos `rqe_confirmado`/`rqe_fonte` nunca chegam pela API
+// desta base. Não foi trocado por outro badge: inventar um sinal novo na
+// linha de resumo seria decisão de produto, não correção de texto.
 
 // --- Aba "Contatos" --------------------------------------------------------
 // Mesmo dado do decisor (decisor_nome, email, whatsapp_ativo,
@@ -512,7 +539,7 @@ function AbaContatos({ lead }: { lead: Lead }) {
   );
 }
 
-// --- Aba "Análise IA" --------------------------------------------------
+// --- Aba "Análise" --------------------------------------------------
 // O bloco "hero" de score (badge de prioridade grande + número gigante
 // + brilho dourado) voltou pro cabeçalho fixo (ver DossierHeader) nesta
 // sessão -- não repetido aqui pra não duplicar o mesmo elemento visual
@@ -590,6 +617,23 @@ function SecaoAbordagem({
   onGerada: (mensagem: LeadMessage) => void;
   geracoesIa: unknown;
 }) {
+  // ⚠️ Enquanto a geração de mensagem por IA não existir no backend, os
+  // botões abaixo bateriam em `POST /gerar-abordagem/{canal}` — que também
+  // não existe — e dariam o mesmo 404 que acabou de ser corrigido no
+  // carregamento. Melhor dizer que a funcionalidade não faz parte desta
+  // versão do que oferecer um botão que só sabe falhar.
+  if (!MENSAGENS_DISPONIVEIS) {
+    return (
+      <section className="dossier-card">
+        <SectionHeading icon={Sparkles}>Abordagem sugerida</SectionHeading>
+        <p className="dossier-muted">
+          A geração de mensagem por IA não faz parte desta versão. Os contatos
+          do lead estão na aba <strong>Contatos</strong>.
+        </p>
+      </section>
+    );
+  }
+
   const mostrarEmail = !!email;
   // WhatsApp aqui exige o sinal *confirmado ativo* (whatsapp_ativo),
   // não só ter um telefone cadastrado -- gerar mensagem pra um número
@@ -815,6 +859,27 @@ function AbaInsights({
     }
   }
 
+  // ⚠️ Mesmo tratamento dado à aba Mensagens, pelo mesmo motivo: o botão
+  // abaixo bate em `POST /gerar-insights`, que não existe nesta base, e o
+  // clique só sabe virar 404. Melhor dizer que a funcionalidade não faz
+  // parte desta versão do que oferecer um botão que só sabe falhar.
+  //
+  // O gate fica DEPOIS dos hooks de propósito -- `useAuth`/`useState` acima
+  // precisam rodar em toda renderização (regras dos hooks). Em
+  // SecaoAbordagem o equivalente pôde ficar na primeira linha porque lá o
+  // componente não tem hook próprio.
+  if (!INSIGHTS_DISPONIVEIS) {
+    return (
+      <section className="dossier-card">
+        <SectionHeading icon={Lightbulb}>Insights estratégicos</SectionHeading>
+        <p className="dossier-muted">
+          A geração de insights por IA não faz parte desta versão. A análise
+          do score do lead está na aba <strong>Análise</strong>.
+        </p>
+      </section>
+    );
+  }
+
   const limite = statusLimiteIa(geracoesIa, "insights");
 
   if (!insights) {
@@ -822,8 +887,9 @@ function AbaInsights({
       <section className="dossier-card">
         <SectionHeading icon={Lightbulb}>Insights estratégicos</SectionHeading>
         <p className="dossier-muted">
-          Ainda não geramos uma análise estratégica pra este lead. A IA olha pro score, dívida PGFN, RQE,
-          presença digital e outros sinais já coletados e sugere como priorizar a abordagem.
+          Ainda não geramos uma análise estratégica pra este lead. A IA olha pro score, área financiada,
+          culturas, valor do crédito rural, presença digital e outros sinais já coletados e sugere como
+          priorizar a abordagem.
         </p>
         {limite.atingido ? (
           <p className="dossier-limite-ia">{MENSAGEM_LIMITE_ATINGIDO}</p>
@@ -909,9 +975,8 @@ function AbaInsights({
 // --- Helpers compartilhados ---------------------------------------------
 
 /** Título de seção com ícone -- usado nos cards das abas "Dados",
- * "Contatos" e "Mensagens" (exceto o de "Dívida ativa PGFN", que troca
- * de ícone conforme pendência/ok, ver SecaoPgfn, e os subtítulos da aba
- * "Análise IA", que usam `.dossier-subheading` -- um nível abaixo, já
+ * "Contatos" e "Mensagens" (exceto os subtítulos da aba
+ * "Análise", que usam `.dossier-subheading` -- um nível abaixo, já
  * que a aba inteira é um card só, não vários). `icon` recebe o
  * componente do lucide-react direto (não um elemento já instanciado),
  * pra poder controlar `size` num lugar só. */

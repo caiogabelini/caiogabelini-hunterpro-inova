@@ -188,8 +188,8 @@ export function BuscaLeadsPage() {
           <AlertTriangle size={18} />
           <p>
             Este painel dispara o pipeline de enriquecimento <strong>de verdade</strong> contra as APIs em produção
-            (Receita Federal, PGFN, CNES, Google Places, Firecrawl + IA, Evolution/WhatsApp, Hunter.io/ZeroBounce)
-            para cada CNPJ novo encontrado. <strong>Não é uma simulação</strong> — gera custo real e cria/atualiza
+            (Sicor/Bacen, Receita Federal, BrasilAPI, API Full, Firecrawl + IA, Evolution/WhatsApp, Hunter.io/ZeroBounce)
+            para cada CPF/CNPJ novo encontrado. <strong>Não é uma simulação</strong> — gera custo real e cria/atualiza
             leads de verdade no Kanban.
           </p>
         </div>

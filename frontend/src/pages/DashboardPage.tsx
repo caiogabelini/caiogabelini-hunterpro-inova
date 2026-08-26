@@ -40,9 +40,12 @@ import "./DashboardPage.css";
 /** Ícone por `filtro_chave` (ver app/schemas/dashboard.py::AcaoRecomendada)
  * -- uma entrada por categoria hoje implementada no backend, mais um
  * fallback genérico pra uma categoria nova que apareça sem entrada aqui
- * (nunca quebra por falta de ícone mapeado). `divida_pgfn_nao_abordada`
- * reaproveita o mesmo `Landmark` já usado na seção de dívida ativa PGFN
- * do dossiê -- mesma linguagem de ícone pro mesmo assunto. */
+ * (nunca quebra por falta de ícone mapeado).
+ *
+ * ⚠️ As chaves aqui são as do Minotto -- este backend não tem rota de
+ * dashboard nenhuma (Fase 8b), então nada deste mapa é exercitado hoje.
+ * `divida_pgfn_nao_abordada` em particular não tem equivalente no agro;
+ * ficou intocada porque é dado de mapeamento, não texto de tela. */
 const ACAO_ICONES: Record<string, LucideIcon> = {
   decisor_identificado: UserCheck,
   prioridade_a: Target,

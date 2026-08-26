@@ -1,6 +1,29 @@
 import type { InsightsIA } from "./api";
 
 /**
+ * A rota `POST /api/leads/{id}/gerar-insights` **existe no backend?**
+ *
+ * ⚠️ Hoje **não** — mesma origem de [[MENSAGENS_DISPONIVEIS]] em
+ * mensagens.ts: geração por IA ficou deliberadamente fora do porte (Fase
+ * 6). O `ai_enrichment.py` do Minotto tem `gerar_mensagem_abordagem` e
+ * `gerar_insights_estrategicos`; nenhuma das duas foi trazida, nem o
+ * controle de limite de geração por lead que segura o custo delas lá.
+ * Não existe rota, nem coluna `insights_ia` no model Lead desta base.
+ *
+ * Diferença em relação a mensagens: aqui **não há carregamento** a
+ * blindar. Insights nunca foram buscados por uma chamada própria — eles
+ * vinham embutidos no Lead (`lead.insights_ia`), então nada dessa aba
+ * participava do `Promise.all` que quebrou o dossiê. O risco que sobra é
+ * só o botão "Gerar Insights com IA", que bateria numa rota inexistente
+ * e daria o mesmo 404 — por isso a flag existe, mas gate só de UI.
+ *
+ * Quando a rota existir, trocar para `true` devolve a aba inteira: o
+ * render dos insights e o fluxo de gerar/gerar-novamente continuam
+ * escritos embaixo do gate, intactos.
+ */
+export const INSIGHTS_DISPONIVEIS = false;
+
+/**
  * Extrai `Lead.insights_ia` de forma defensiva -- mesmo raciocínio de
  * `getScoreBreakdown` em leadScore.ts: o valor chega pela rede via
  * `fetch().json()` (tipado `any` pelo TypeScript, sem garantia em

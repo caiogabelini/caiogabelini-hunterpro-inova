@@ -42,7 +42,7 @@
    número de score "hero".
    ⚠️ Histórico rápido, pra quem for mexer aqui de novo: a sessão da
    reestruturação em abas (mesmo dia) tinha tirado esse número gigante
-   daqui e colocado dentro da aba "Análise IA", achando que duplicava a
+   daqui e colocado dentro da aba "Análise", achando que duplicava a
    linha de resumo. Feedback visual real do usuário pediu de volta --
    o número no canto é o elemento mais importante da tela e precisa
    ficar visível em toda aba, não só numa. A linha de resumo perdeu o
@@ -113,7 +113,7 @@
 }
 
 /* Linha secundária: "município/UF · nicho" -- nicho é texto fixo
-   ("Clínica Médica", ver NICHO_FIXO em LeadDossierPage.tsx), já que o
+   ("Agronegócio", ver NICHO_FIXO em LeadDossierPage.tsx), já que o
    Lead não tem um campo de especialidade estruturado pra derivar algo
    mais específico sem inventar dado novo. */
 .dossier-secundaria {
@@ -629,7 +629,7 @@
   background: var(--overlay-primary-weak);
 }
 
-/* Subtítulo dentro da aba "Análise IA"/"Insights" -- um nível abaixo de
+/* Subtítulo dentro da aba "Análise"/"Insights" -- um nível abaixo de
    `.dossier-section-heading` (que é usado quando cada card TEM seu
    próprio título de topo; aqui a aba inteira já é um card só, então
    "Sinais positivos"/"Breakdown do score"/"Recomendação de abordagem"
@@ -903,7 +903,7 @@
    `.dossier-section-heading` (justamente por isso `.dossier-card` não
    dá margin-bottom no heading aqui, ver `.dossier-insights-header`
    sobrescrevendo). Resto do card segue o mesmo empilhamento vertical dos
-   outros blocos da aba "Análise IA" (`.dossier-subheading` reaproveitado
+   outros blocos da aba "Análise" (`.dossier-subheading` reaproveitado
    pros títulos internos). */
 .dossier-insights-header {
   display: flex;

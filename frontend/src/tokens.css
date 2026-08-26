@@ -1,0 +1,104 @@
+/*
+ * Tokens de design compartilhados — HunterPro Inova Contabilidade.
+ *
+ * Portado de frontend/src/tokens.css do Minotto. A ESTRUTURA é a mesma
+ * (tema claro, uma cor dominante + uma cor de detalhe, escala de espaço,
+ * sombras sutis); o que muda é a paleta, ancorada na marca real da Inova:
+ * **laranja #F68713 + navy escuro**, as cores dos decks já entregues à
+ * cliente. O dourado #f68713 do Minotto não aparece em lugar nenhum.
+ *
+ * Este arquivo é a fonte central de cor. Toda cor usada em mais de um
+ * arquivo CSS mora aqui — nunca hex/rgba hardcoded num CSS de página.
+ * Importado em main.tsx ANTES de index.css, que consome estas variáveis.
+ */
+:root {
+  /* --- Paleta de marca --- */
+  --color-primary: #12263c; /* navy escuro — botões, links, destaques, ícones de seção */
+  --color-primary-dark: #0d1b2c; /* hover de botão primário, seções de destaque */
+  --color-orange: #f68713; /* laranja da marca — detalhes: badges, sublinhados, bordas */
+
+  /* ⚠️ #f68713 tem 2,50:1 de contraste contra branco — abaixo do mínimo
+     4,5:1 do WCAG AA pra texto pequeno. Mesma armadilha que o dourado do
+     Minotto (2,42:1) e resolvida do mesmo jeito: o laranja puro serve
+     como PREENCHIMENTO (badge, borda, barra), nunca como cor de texto
+     isolada sobre fundo claro. Pra texto/ícone laranja autônomo, usar a
+     variante escura abaixo. Contrastes calculados nesta sessão. */
+  --color-orange-dark: #b45309; /* 5,02:1 contra branco — passa AA */
+  --color-orange-bg: rgba(246, 135, 19, 0.14); /* fundo pastel do padrão badge */
+
+  /* --- Fundos --- */
+  --bg-page: #f5f6fa;
+  --bg-card: #ffffff;
+  /* Superfície elevada dentro de card branco (input/textarea). Precisa
+     ser SÓLIDA: o truque de autofill do Chrome usa esta cor num
+     box-shadow inset, e uma cor com alpha deixaria o fundo do autofill
+     vazar nas bordas. */
+  --bg-elevated: #f3f4f6;
+
+  /* --- Texto --- */
+  --text-primary: #1a1a2e; /* 17,06:1 contra branco */
+  --text-secondary: #6b7280; /* 4,83:1 — passa AA */
+  --text-muted: #9ca3af; /* 2,54:1 — nunca como única forma de transmitir informação */
+
+  /* --- Borda --- */
+  --border: #e5e7eb;
+
+  /* --- Cores semânticas ---
+     Contrastes contra branco calculados: success 7,13:1, danger 6,47:1,
+     info 6,70:1 — todos passam AA como texto. Os `-bg` são pastel, só
+     pra preenchimento de badge/painel, nunca pra texto. */
+  --color-success: #166534;
+  --color-success-bg: rgba(22, 163, 74, 0.12);
+  --color-danger: #b91c1c;
+  --color-danger-bg: rgba(220, 38, 38, 0.1);
+  --color-info: #1d4ed8;
+  --color-info-bg: rgba(37, 99, 235, 0.1);
+
+  /* Alerta "aproximando-se de um limite" (ex.: consumo do plano no
+     Dashboard). ⚠️ Aqui o Minotto usava laranja pra distinguir de
+     vermelho — na Inova laranja É a cor da marca, então usar laranja
+     como alerta confundiria "atenção" com "identidade". Alerta passa a
+     ser âmbar escuro, distinto tanto do laranja da marca quanto do
+     vermelho de perigo. */
+  --color-alert: #92400e;
+
+  /* Washes neutros tingidos de --color-primary — hover/estado ativo
+     sutil sobre fundo claro. */
+  --overlay-primary-weak: rgba(18, 38, 60, 0.05);
+  --overlay-primary-medium: rgba(18, 38, 60, 0.1);
+
+  /* --- Sombras --- tema claro pede sombra sutil; opacidade alta vira
+     mancha cinza dura em vez de sugerir elevação. */
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.08);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.06);
+  --shadow-lg: 0 16px 32px rgba(0, 0, 0, 0.1);
+  --shadow-primary-hover: 0 6px 16px rgba(18, 38, 60, 0.18);
+
+  /* Transições */
+  --transition-fast: 150ms ease;
+  --transition-smooth: 250ms ease;
+
+  /* Escala de espaçamento — múltiplos de 4px */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+
+  /* Largura da sidebar — AuthenticatedLayout.css precisa do mesmo valor */
+  --sidebar-width: 240px;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.spin {
+  animation: spin 0.9s linear infinite;
+}

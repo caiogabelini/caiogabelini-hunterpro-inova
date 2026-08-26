@@ -1,0 +1,355 @@
+.busca-leads-page {
+  min-height: 100vh;
+  padding: var(--space-8) var(--space-8) var(--space-10);
+  max-width: 720px;
+  margin: 0 auto;
+}
+
+.busca-leads-header {
+  margin-bottom: var(--space-8);
+}
+
+.busca-leads-eyebrow {
+  font-size: 12px;
+  letter-spacing: 3px;
+  color: var(--color-primary);
+  font-weight: 700;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+
+.busca-leads-title {
+  font-family: var(--font-display);
+  font-weight: 400;
+  letter-spacing: 0.5px;
+  font-size: 34px;
+  margin: 0;
+  color: var(--text-primary);
+}
+
+.busca-leads-status {
+  color: var(--text-secondary);
+  font-size: 14px;
+}
+
+.busca-leads-muted {
+  color: var(--text-secondary);
+  font-size: 13px;
+  margin: 0;
+}
+
+.busca-leads-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: var(--space-6);
+  box-shadow: var(--shadow-sm);
+}
+
+.busca-leads-disparo {
+  margin-bottom: var(--space-6);
+}
+
+.busca-leads-section-heading {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-family: var(--font-display);
+  font-weight: 400;
+  letter-spacing: 0.3px;
+  font-size: 16px;
+  color: var(--color-primary);
+  text-transform: uppercase;
+  margin: 0 0 var(--space-4);
+}
+
+.busca-leads-section-heading svg {
+  flex-shrink: 0;
+  color: var(--color-primary);
+}
+
+/* Aviso "isto é real, não simulação" -- pedido explícito de ficar
+   sempre visível, não escondido atrás de um clique. Reaproveita
+   --color-danger/--color-danger-bg (não --color-alert, criado na sessão
+   do Dashboard pra "perto de um limite") -- custo real de API em
+   produção é mais próximo de "risco sério" do que de "atenção, quase
+   lá", por isso o vermelho mais forte, não o laranja. */
+.busca-leads-aviso {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  background: var(--color-danger-bg);
+  border: 1px solid rgba(185, 28, 28, 0.3);
+  border-radius: 12px;
+  padding: var(--space-4) var(--space-5);
+  margin-bottom: var(--space-5);
+  color: var(--color-danger);
+}
+
+.busca-leads-aviso svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.busca-leads-aviso p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-primary);
+}
+
+.busca-leads-aviso strong {
+  color: var(--color-danger);
+}
+
+/* Botão principal -- fica no visual padrão de botão primário (navy) já
+   estabelecido no resto do app, não um vermelho "botão perigoso": a
+   ação em si (rodar o pipeline) não é destrutiva, ela CRIA/atualiza
+   leads -- o cuidado fica por conta do aviso acima e do modal de
+   confirmação, não da cor do botão em si. */
+.busca-leads-btn-executar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  min-width: 220px;
+  background: var(--color-primary);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 13px 22px;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  font-family: var(--font-body);
+  transition: background-color var(--transition-fast), box-shadow var(--transition-fast), transform var(--transition-fast);
+}
+
+.busca-leads-btn-executar:hover:not(:disabled) {
+  background: var(--color-primary-dark);
+  box-shadow: var(--shadow-primary-hover);
+  transform: translateY(-1px);
+}
+
+.busca-leads-btn-executar:disabled {
+  opacity: 0.7;
+  cursor: default;
+  transform: none;
+}
+
+.busca-leads-progresso {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  background: var(--overlay-primary-weak);
+  border-radius: 12px;
+  padding: var(--space-4) var(--space-5);
+  color: var(--color-primary);
+}
+
+.busca-leads-progresso-texto {
+  margin: 0 0 4px;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.busca-leads-progresso-nota {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.busca-leads-erro-disparo {
+  margin: var(--space-4) 0 0;
+  font-size: 13px;
+  color: var(--color-danger);
+}
+
+/* Mensagem de 409 (já existe uma busca em andamento) -- informativa,
+   não um erro: tom neutro/navy (mesma cor de "em andamento" do resto
+   da tela), não vermelho, pra não ler como uma falha do usuário. */
+.busca-leads-info-disparo {
+  margin: var(--space-4) 0 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-primary);
+}
+
+/* Resumo ao concluir -- mesmo padrão "fundo pastel + texto/ícone
+   saturado" dos outros badges/painéis semânticos do app (ver
+   .dossier-pgfn-ok/-alerta na página do dossiê). */
+.busca-leads-resumo {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  margin-top: var(--space-5);
+  padding: var(--space-4) var(--space-5);
+  border-radius: 12px;
+  border: 1px solid;
+}
+
+.busca-leads-resumo-sucesso {
+  background: var(--color-success-bg);
+  border-color: rgba(22, 101, 52, 0.3);
+  color: var(--color-success);
+}
+
+.busca-leads-resumo-erro {
+  background: var(--color-danger-bg);
+  border-color: rgba(185, 28, 28, 0.3);
+  color: var(--color-danger);
+}
+
+.busca-leads-resumo svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.busca-leads-resumo-titulo {
+  margin: 0 0 4px;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.busca-leads-resumo-texto {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.busca-leads-resumo-erros {
+  margin-top: var(--space-3);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.busca-leads-resumo-erros summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--color-danger);
+}
+
+.busca-leads-resumo-erros ul {
+  margin: var(--space-2) 0 0;
+  padding-left: var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* --- Histórico --- */
+
+.busca-leads-historico-lista {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.busca-leads-historico-item {
+  background: var(--bg-page);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: var(--space-3) var(--space-4);
+}
+
+.busca-leads-historico-topo {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: 4px;
+}
+
+.busca-leads-historico-data {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.busca-leads-historico-totais {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.busca-leads-status-badge {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  border-radius: 999px;
+  padding: 3px 10px;
+}
+
+.busca-leads-status-badge-executando {
+  background: var(--overlay-primary-medium);
+  color: var(--color-primary);
+}
+
+.busca-leads-status-badge-concluido {
+  background: var(--color-success-bg);
+  color: var(--color-success);
+}
+
+.busca-leads-status-badge-erro {
+  background: var(--color-danger-bg);
+  color: var(--color-danger);
+}
+
+/* --- Modal de confirmação (conteúdo dentro de <Modal>) --- */
+
+.busca-leads-modal-texto {
+  margin: 0 0 var(--space-5);
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--text-primary);
+}
+
+.busca-leads-modal-acoes {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-3);
+}
+
+.busca-leads-modal-btn-cancelar {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  border-radius: 8px;
+  padding: 9px 16px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  font-family: var(--font-body);
+  transition: border-color var(--transition-fast), color var(--transition-fast);
+}
+
+.busca-leads-modal-btn-cancelar:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+.busca-leads-modal-btn-confirmar {
+  background: var(--color-primary);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 9px 16px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  font-family: var(--font-body);
+  transition: background-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.busca-leads-modal-btn-confirmar:hover {
+  background: var(--color-primary-dark);
+  box-shadow: var(--shadow-primary-hover);
+}

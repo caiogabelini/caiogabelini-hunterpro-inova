@@ -1,0 +1,150 @@
+/*
+ * Sidebar fixa à esquerda -- presente em toda tela autenticada
+ * (AuthenticatedLayout.tsx compõe isso com o conteúdo de cada página).
+ *
+ * "Fixa" aqui é `position: sticky` dentro de um flex row (ver
+ * AuthenticatedLayout.css), não `position: fixed` -- os dois produzem o
+ * mesmo resultado visual (sidebar sempre visível, conteúdo rola por
+ * baixo dela), mas sticky dentro de flex evita ter que sincronizar um
+ * `margin-left` manual no conteúdo com a largura da sidebar; o layout
+ * flex já reserva o espaço sozinho. --sidebar-width (tokens.css) é o
+ * único lugar que define a largura, os dois arquivos leem de lá.
+ *
+ * Retema (21/08/2026): era um painel escuro (--navy-dark) com item ativo
+ * em dourado; agora é um painel claro (--bg-card, branco) com uma borda
+ * fina à direita (--border) separando do conteúdo, e o item ativo usa
+ * --color-primary (navy) -- não dourado, per pedido explícito de manter
+ * dourado só em detalhes pequenos, não num destaque de navegação que
+ * aparece o tempo todo na tela.
+ */
+.sidebar {
+  width: var(--sidebar-width);
+  flex-shrink: 0;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-card);
+  border-right: 1px solid var(--border);
+  padding: var(--space-6) var(--space-4);
+  overflow-y: auto;
+}
+
+.sidebar-brand {
+  padding: 0 var(--space-2) var(--space-8);
+}
+
+.sidebar-brand-eyebrow {
+  font-family: var(--font-display);
+  font-weight: 400;
+  letter-spacing: 1px;
+  font-size: 24px;
+  color: var(--color-primary);
+  line-height: 1;
+}
+
+.sidebar-brand-nome {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.sidebar-nav {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  flex: 1;
+}
+
+.sidebar-nav-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 10px var(--space-3) 10px calc(var(--space-3) - 3px);
+  border-left: 3px solid transparent;
+  border-radius: 8px;
+  color: var(--text-secondary);
+  text-decoration: none;
+  font-size: 14px;
+  font-weight: 600;
+  transition: background-color var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
+}
+
+.sidebar-nav-item:hover:not(.sidebar-nav-item-desabilitado) {
+  background: var(--overlay-primary-weak);
+  color: var(--text-primary);
+}
+
+.sidebar-nav-item-ativo {
+  background: var(--overlay-primary-medium);
+  color: var(--color-primary);
+  border-left-color: var(--color-primary);
+}
+
+.sidebar-nav-item-desabilitado {
+  color: var(--text-muted);
+  cursor: default;
+}
+
+.sidebar-nav-badge {
+  margin-left: auto;
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  background: var(--bg-page);
+  color: var(--text-secondary);
+  border-radius: 999px;
+  padding: 2px 7px;
+  white-space: nowrap;
+}
+
+.sidebar-footer {
+  border-top: 1px solid var(--border);
+  padding-top: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.sidebar-user {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-2);
+}
+
+.sidebar-user-icone {
+  display: flex;
+  color: var(--text-secondary);
+}
+
+.sidebar-user-nome {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.sidebar-logout {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  border-radius: 8px;
+  padding: 9px var(--space-3);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  font-family: var(--font-body);
+  transition: border-color var(--transition-fast), color var(--transition-fast), background-color var(--transition-fast);
+}
+
+.sidebar-logout:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+  background: var(--overlay-primary-weak);
+}

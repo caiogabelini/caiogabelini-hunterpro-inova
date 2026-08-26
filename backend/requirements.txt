@@ -10,3 +10,12 @@ celery
 redis
 httpx
 dnspython
+python-jose[cryptography]
+passlib[bcrypt]
+# ⚠️ bcrypt travado em <4.0 de propósito: passlib==1.7.4 (sem manutenção
+# desde 2020) lê `bcrypt.__about__.__version__` pra detectar a versão do
+# backend, atributo removido no bcrypt 4.x. Sem este pin, hash_password()
+# quebra com um ValueError enganoso ("password cannot be longer than 72
+# bytes") mesmo pra senha curta. Confirmado no Minotto em 20/08/2026.
+bcrypt==3.2.2
+

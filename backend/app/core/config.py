@@ -20,6 +20,36 @@ class Settings(BaseSettings):
 
     PROJETO_NOME: str = "HunterPro — Inova Contabilidade"
 
+    #: development | staging | production.
+    #: ⚠️ Declarada desde a Fase 1 e nunca lida — o docstring de então
+    #: registrava isso como dívida ("se o próximo projeto quiser desabilitar
+    #: /docs em produção, é aqui que se usa"). A partir da Fase 8a ela é
+    #: lida de verdade, em `app/main.py`, pra fechar /docs e /openapi.json
+    #: fora de desenvolvimento.
+    ENVIRONMENT: str = "development"
+
+    # --- Autenticação -----------------------------------------------------
+    #: ⚠️ NUNCA usar este valor em produção. É o padrão de desenvolvimento;
+    #: produção recebe uma chave forte e diferente via ambiente (§7).
+    SECRET_KEY: str = "changeme-in-env"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 12  # 12h
+
+    #: Anti-força-bruta no login (contador por e-mail no Redis).
+    #: ⚠️ Convenção de "desligar" da §5: 0 ou negativo LIBERA, não bloqueia
+    #: — config zerada por engano solta o produto, não tranca todo mundo.
+    LOGIN_MAX_TENTATIVAS: int = 5
+    LOGIN_JANELA_BLOQUEIO_MINUTOS: int = 15
+
+    REDIS_URL: str = "redis://localhost:6379/0"
+
+    # --- CORS -------------------------------------------------------------
+    #: Origem do frontend. Em dev é o Vite; em produção, o domínio do cliente.
+    FRONTEND_ORIGIN: str = "http://localhost:5173"
+
+    @property
+    def em_producao(self) -> bool:
+        return self.ENVIRONMENT.strip().lower() == "production"
+
     # --- Volume e custo (mesmo padrão do Minotto, seção 5) ---------------
     #: Volume contratado pela cliente. A Inova contratou 50/mês.
     LEADS_POR_BUSCA: int = 50

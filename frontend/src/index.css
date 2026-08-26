@@ -1,0 +1,75 @@
+/* Identidade visual do HunterPro Inova — tema claro, ancorado na marca
+   real da Inova Contabilidade (laranja #F68713 + navy escuro, as cores
+   dos decks já entregues à cliente). A paleta em si mora em tokens.css,
+   importado antes deste arquivo em main.tsx — aqui só tipografia e
+   estilos globais/compartilhados.
+
+   Bebas Neue + Inter vêm do Minotto e foram mantidas: a tipografia não
+   era parte da identidade que muda por cliente, e trocá-la sem pedido
+   seria inventar. */
+:root {
+  --font-display: "Bebas Neue", "Segoe UI", sans-serif;
+  --font-body: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+
+  /* Avisa o navegador que a página é clara — ajuda scrollbar, dropdown
+     de autofill e controles não estilizados a renderizarem em esquema
+     claro por padrão. */
+  color-scheme: light;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg-page);
+  color: var(--text-primary);
+  font-family: var(--font-body);
+}
+
+#root {
+  min-height: 100vh;
+}
+
+/* PriorityBadge — compartilhado entre KanbanCard e LeadDossierPage.
+   ⚠️ Os nomes das classes mudaram em relação ao Minotto: lá a prioridade
+   era A/B/C, aqui o backend grava ALTA/MEDIA/BAIXA
+   (`prioridade_do_score` em app/workers/enriquecimento.py). Ver
+   components/PriorityBadge.tsx. */
+.priority-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  border-radius: 999px;
+  padding: 3px 10px 3px 8px;
+}
+
+.priority-badge::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.priority-alta { background: var(--color-success-bg); color: var(--color-success); }
+/* Laranja da marca no lugar do dourado do Minotto — e na variante ESCURA,
+   porque aqui é cor de TEXTO (#f68713 puro daria 2,50:1 sobre o pastel). */
+.priority-media { background: var(--color-orange-bg); color: var(--color-orange-dark); }
+.priority-baixa { background: var(--color-danger-bg); color: var(--color-danger); }
+
+/* Variante maior — cabeçalho do Dossiê, onde a prioridade precisa de
+   mais presença visual que a pill discreta do card do Kanban. */
+.priority-badge-lg {
+  font-size: 13px;
+  padding: 5px 14px 5px 11px;
+}
+
+.priority-badge-lg::before {
+  width: 8px;
+  height: 8px;
+}

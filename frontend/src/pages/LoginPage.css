@@ -1,0 +1,171 @@
+.login-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-6);
+}
+
+.login-card {
+  width: 100%;
+  max-width: 400px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: var(--space-10) var(--space-8);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  box-shadow: var(--shadow-lg);
+}
+
+/* Detalhe dourado pequeno (o ícone) -- um dos poucos lugares desta tela
+   que ainda usa dourado, de propósito: é um badge pequeno, não um
+   elemento dominante, exatamente o tipo de uso que o retema claro
+   reservou pra --color-orange. */
+.login-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  background: var(--color-orange-bg);
+  color: var(--color-orange-dark);
+  margin-bottom: var(--space-5);
+}
+
+.login-eyebrow {
+  font-size: 12px;
+  letter-spacing: 3px;
+  color: var(--color-primary);
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.login-title {
+  font-family: var(--font-display);
+  font-weight: 400;
+  letter-spacing: 0.5px;
+  font-size: 32px;
+  margin: 4px 0 8px;
+  color: var(--text-primary);
+}
+
+.login-subtitle {
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin: 0 0 var(--space-8);
+  line-height: 1.5;
+}
+
+.login-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: var(--space-5);
+}
+
+.login-field input {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 11px 13px;
+  font-size: 14px;
+  color: var(--text-primary);
+  caret-color: var(--color-primary);
+  font-family: var(--font-body);
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.login-field input::placeholder {
+  color: var(--text-muted);
+}
+
+.login-field input:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px var(--overlay-primary-medium);
+}
+
+/* Override do autofill do Chrome/Edge/Safari (WebKit) -- por padrão o
+   navegador ignora `background`/`color` num campo autofilled e pinta um
+   fundo próprio (tipicamente um amarelo pálido), que não dá pra
+   sobrescrever com essas duas propriedades direto. O truque é um
+   `box-shadow` inset gigante (cobre todo o campo) com a MESMA cor sólida
+   de --bg-elevated, mais `-webkit-text-fill-color` (não `color`) pro
+   texto -- WebKit ignora `color` em campo autofilled, mas respeita essa
+   propriedade específica. `transition` bem longa no background-color
+   atrasa o flash de cor que o navegador aplica no instante do autofill,
+   antes do CSS "vencer".
+   No tema claro o salto visual é bem mais discreto que no tema escuro
+   original (era um branco/amarelo forte estourando sobre um fundo navy
+   escuro; agora é um amarelo pálido sobre um cinza claro parecido) --
+   ainda assim mantido, pra garantir que o campo autofilled sempre bate
+   exatamente com --bg-elevated/--text-primary, não com a cor que o
+   navegador decidir usar por padrão. */
+.login-field input:-webkit-autofill,
+.login-field input:-webkit-autofill:hover,
+.login-field input:-webkit-autofill:focus,
+.login-field input:-webkit-autofill:active {
+  -webkit-box-shadow: 0 0 0 1000px var(--bg-elevated) inset;
+  box-shadow: 0 0 0 1000px var(--bg-elevated) inset;
+  -webkit-text-fill-color: var(--text-primary);
+  caret-color: var(--color-primary);
+  transition: background-color 9999s ease-in-out 0s, box-shadow 9999s ease-in-out 0s;
+}
+
+.login-field input:-webkit-autofill:focus {
+  border-color: var(--color-primary);
+}
+
+/* Firefox usa a pseudo-classe `:autofill` (sem prefixo) e, diferente do
+   WebKit, respeita `background-color`/`color` normais aqui -- não
+   precisa do truque do box-shadow, mas precisa da regra mesmo assim
+   (senão o autofill do Firefox também cai no padrão dele). */
+.login-field input:autofill {
+  background-color: var(--bg-elevated);
+  color: var(--text-primary);
+}
+
+.login-error {
+  color: var(--color-danger);
+  font-size: 13px;
+  margin: 0 0 var(--space-5);
+}
+
+.login-submit {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  background: var(--color-primary);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 13px;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  font-family: var(--font-body);
+  margin-top: var(--space-2);
+  transition: background-color var(--transition-fast), box-shadow var(--transition-fast), transform var(--transition-fast);
+}
+
+.login-submit:hover:not(:disabled) {
+  background: var(--color-primary-dark);
+  box-shadow: var(--shadow-primary-hover);
+  transform: translateY(-1px);
+}
+
+.login-submit:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+.login-submit:disabled {
+  opacity: 0.6;
+  cursor: default;
+}

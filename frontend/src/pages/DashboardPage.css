@@ -1,0 +1,603 @@
+.dashboard-page {
+  min-height: 100vh;
+  padding: var(--space-8) var(--space-8) var(--space-10);
+  max-width: 1040px;
+  margin: 0 auto;
+}
+
+.dashboard-header {
+  margin-bottom: var(--space-8);
+}
+
+.dashboard-eyebrow {
+  font-size: 12px;
+  letter-spacing: 3px;
+  color: var(--color-primary);
+  font-weight: 700;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+
+.dashboard-title {
+  font-family: var(--font-display);
+  font-weight: 400;
+  letter-spacing: 0.5px;
+  font-size: 34px;
+  margin: 0;
+  color: var(--text-primary);
+}
+
+.dashboard-status {
+  color: var(--text-secondary);
+  font-size: 14px;
+}
+
+.dashboard-erro {
+  color: var(--color-danger);
+}
+
+.dashboard-section {
+  margin-bottom: var(--space-8);
+}
+
+.dashboard-section-heading {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-family: var(--font-display);
+  font-weight: 400;
+  letter-spacing: 0.3px;
+  font-size: 16px;
+  color: var(--color-primary);
+  text-transform: uppercase;
+  margin: 0 0 var(--space-4);
+}
+
+.dashboard-section-heading svg {
+  flex-shrink: 0;
+  color: var(--color-primary);
+}
+
+.dashboard-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: var(--space-5) var(--space-6);
+  box-shadow: var(--shadow-sm);
+}
+
+.dashboard-muted {
+  color: var(--text-secondary);
+  font-size: 13px;
+  margin: 0;
+}
+
+/* --- Resumo executivo (KPIs) ---
+   5 cards desde a Receita Fechada (23/08/2026) -- o `minmax(220px, ...)`
+   antigo só cabia 4 por linha no container de 976px (max-width 1040px
+   de .dashboard-page menos os 2x --space-8 de padding), sobrando o 5º
+   numa linha sozinho. Reduzido pra minmax(176px, 1fr) + gap de
+   --space-3 (12px, era --space-4/16px): 5 colunas de ~186px cabem em
+   976px (5*188-12=928px, ainda com folga) -- ver a conta completa no
+   commit/PR que introduziu este ajuste. Continua `auto-fit`, não um
+   `repeat(5, 1fr)` fixo -- é o que já fazia o wrap responsivo pra
+   telas menores funcionar antes, e com os novos números o grid ainda
+   quebra pra 4 colunas por volta de ~1044px de viewport, 2 colunas por
+   volta de ~856px e 1 coluna abaixo de ~668px (sidebar fixa de 240px
+   descontada do viewport pra chegar na largura real do container). */
+
+.dashboard-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(176px, 1fr));
+  gap: var(--space-3);
+}
+
+.dashboard-kpi-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: var(--space-4) var(--space-5);
+  box-shadow: var(--shadow-sm);
+}
+
+.dashboard-kpi-icone {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: var(--overlay-primary-weak);
+  color: var(--color-primary);
+  margin-bottom: var(--space-2);
+}
+
+.dashboard-kpi-valor {
+  font-family: var(--font-display);
+  font-size: 30px;
+  color: var(--color-primary);
+  line-height: 1;
+}
+
+.dashboard-kpi-sufixo {
+  font-family: var(--font-body);
+  font-size: 16px;
+  font-weight: 400;
+  color: var(--text-secondary);
+  margin-left: 2px;
+}
+
+.dashboard-kpi-label {
+  margin-top: var(--space-2);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--text-secondary);
+}
+
+/* 4º card do Resumo Executivo (Receita Estimada do Pipeline) --
+   destacado dos outros 3 com um fundo em tom suave de --color-orange
+   (pedido explícito: "esse é especial"). O ícone reforça o mesmo tom
+   (fundo/cor dourados em vez do navy-tint dos outros cards), mas o
+   valor grande continua em --color-primary -- mesma regra já
+   estabelecida no retema claro de que números grandes/importantes usam
+   navy, não dourado (dourado aqui é só o "tema" do card, não a cor do
+   dado em si, que precisa continuar com o contraste mais forte). */
+.dashboard-kpi-card-destaque {
+  background: var(--color-orange-bg);
+  border-color: rgba(201, 162, 39, 0.3);
+}
+
+.dashboard-kpi-card-destaque .dashboard-kpi-icone {
+  background: rgba(201, 162, 39, 0.18);
+  color: var(--color-orange-dark);
+}
+
+/* Valor deste card é uma string de moeda ("R$ 12.345,00"), bem mais
+   larga que os números curtos dos outros 3 KPIs -- fonte reduzida em
+   relação ao --dashboard-kpi-valor padrão (30px, era 36px antes do
+   ajuste de 5 colunas) pra não estourar a largura do card, agora ainda
+   mais estreito (~186px com 5 colunas por linha, ver comentário acima
+   de .dashboard-kpi-grid). */
+.dashboard-kpi-card-destaque .dashboard-kpi-valor {
+  font-size: 22px;
+}
+
+/* 5º card do Resumo Executivo (Receita Fechada) -- mesmo tratamento
+   visual do 4º card (fundo suave + ícone colorido + valor menor pra
+   caber uma string de moeda), mas em VERDE (--color-success) em vez de
+   dourado, pra diferenciar claramente "projeção" (Receita Estimada) de
+   "fato consumado" (Receita Fechada) -- pedido explícito. Reaproveita
+   .dashboard-kpi-premissas pra linha pequena de pontual/recorrente. */
+.dashboard-kpi-card-destaque-verde {
+  background: var(--color-success-bg);
+  border-color: rgba(22, 163, 74, 0.3);
+}
+
+.dashboard-kpi-card-destaque-verde .dashboard-kpi-icone {
+  background: rgba(22, 163, 74, 0.18);
+  color: var(--color-success);
+}
+
+.dashboard-kpi-card-destaque-verde .dashboard-kpi-valor {
+  font-size: 22px;
+}
+
+.dashboard-kpi-premissas {
+  margin: var(--space-2) 0 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+
+.dashboard-kpi-simular-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: var(--space-3);
+  background: transparent;
+  border: none;
+  padding: 0;
+  font-size: 12px;
+  font-weight: 700;
+  font-family: var(--font-body);
+  color: var(--color-primary);
+  cursor: pointer;
+  transition: color var(--transition-fast);
+}
+
+.dashboard-kpi-simular-btn:hover {
+  color: var(--color-primary-dark);
+  text-decoration: underline;
+}
+
+/* --- Consumo do plano --- */
+
+.dashboard-plano-topo {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+
+.dashboard-plano-contagem {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.dashboard-plano-percentual {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-secondary);
+}
+
+.dashboard-plano-percentual-alerta {
+  color: var(--color-alert);
+}
+
+.dashboard-progress-track {
+  width: 100%;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--bg-page);
+  overflow: hidden;
+}
+
+.dashboard-progress-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--color-primary);
+  transition: width var(--transition-smooth);
+}
+
+.dashboard-progress-fill-alerta {
+  background: var(--color-alert);
+}
+
+.dashboard-plano-aviso {
+  margin: var(--space-3) 0 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-alert);
+}
+
+/* --- Funil de conversão --- */
+
+.dashboard-funil-lista {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.dashboard-funil-etapa {
+  display: grid;
+  grid-template-columns: 140px 1fr 84px;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.dashboard-funil-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.dashboard-funil-barra-track {
+  height: 20px;
+  border-radius: 6px;
+  background: var(--bg-page);
+  overflow: hidden;
+}
+
+.dashboard-funil-barra-fill {
+  height: 100%;
+  border-radius: 6px;
+  background: var(--color-primary);
+  transition: width var(--transition-smooth);
+}
+
+/* Etapa "Ganho" destacada em verde -- desfecho positivo do funil, mesma
+   linguagem semântica de cor (verde = sucesso) já usada em todo o
+   resto do app; não pedido explicitamente, mas consistente com o
+   vocabulário estabelecido. */
+.dashboard-funil-barra-fill-ganho {
+  background: var(--color-success);
+}
+
+/* Etapa "Perdido" -- pedido explícito: precisa ficar visualmente
+   distinta de navy/verde, pra deixar claro que é uma SAÍDA do funil,
+   não uma etapa de progresso, mesmo estando na mesma lista de 9 barras.
+   Mesmo --color-danger já usado na seção "Motivos de perda" logo
+   abaixo -- consistência entre as duas seções desta página em vez de
+   introduzir um terceiro tom de vermelho/cinza. */
+.dashboard-funil-barra-fill-perdido {
+  background: var(--color-danger);
+}
+
+.dashboard-funil-numeros {
+  font-size: 12px;
+  color: var(--text-secondary);
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* Nota de honestidade metodológica (pedido explícito) -- discreta de
+   propósito: texto pequeno, cor --text-muted, separada do funil por uma
+   linha fina, pra não competir visualmente com o funil em si mas ainda
+   ficar visível sem precisar procurar. */
+.dashboard-funil-nota {
+  margin: var(--space-5) 0 0;
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+/* --- Motivos de perda --- */
+
+.dashboard-perda-vazio {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  color: var(--color-success);
+}
+
+.dashboard-perda-vazio-texto {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.dashboard-perda-lista {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.dashboard-perda-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.dashboard-perda-posicao {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  border-radius: 999px;
+  background: var(--color-danger-bg);
+  color: var(--color-danger);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.dashboard-perda-corpo {
+  flex: 1;
+  min-width: 0;
+}
+
+.dashboard-perda-topo {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: 4px;
+}
+
+.dashboard-perda-motivo {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.dashboard-perda-quantidade {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--color-danger);
+  white-space: nowrap;
+}
+
+.dashboard-perda-barra-track {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--bg-page);
+  overflow: hidden;
+}
+
+.dashboard-perda-barra-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--color-danger);
+  transition: width var(--transition-smooth);
+}
+
+/* --- Ações recomendadas --- */
+
+.dashboard-acoes-lista {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.dashboard-acao-card {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: var(--space-4) var(--space-5);
+  box-shadow: var(--shadow-sm);
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.dashboard-acao-card:hover {
+  border-color: var(--color-primary);
+  box-shadow: var(--shadow-md);
+}
+
+.dashboard-acao-icone {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: var(--overlay-primary-weak);
+  color: var(--color-primary);
+  flex-shrink: 0;
+}
+
+.dashboard-acao-corpo {
+  flex: 1;
+  min-width: 0;
+}
+
+.dashboard-acao-titulo {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+/* "Quantidade em destaque" (pedido explícito) -- negrito, maior que o
+   título ao lado, cor --color-primary, pra saltar aos olhos mais do que
+   o texto explicativo. */
+.dashboard-acao-quantidade {
+  margin-top: 2px;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--color-primary);
+}
+
+.dashboard-acao-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-primary);
+  text-decoration: none;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: color var(--transition-fast);
+}
+
+.dashboard-acao-link:hover {
+  color: var(--color-primary-dark);
+  text-decoration: underline;
+}
+
+/* --- Simulador de receita --- */
+
+/* --- Simulador de receita (campos, dentro do SimuladorReceitaModal) ---
+   Não é mais uma seção própria da página -- essas classes agora
+   estilizam o conteúdo do modal aberto pelo card de destaque "Receita
+   Estimada do Pipeline" (ver .dashboard-kpi-card-destaque acima e
+   components/SimuladorReceitaModal.tsx). Renderizadas dentro de
+   `.hp-modal-corpo` (Modal.css), que já não tem fundo/borda próprios
+   pra não duplicar o card que .hp-modal-card já desenha. */
+.dashboard-simulador-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--space-4);
+  margin-bottom: var(--space-5);
+}
+
+.dashboard-simulador-campo {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.dashboard-simulador-campo input {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 14px;
+  color: var(--text-primary);
+  font-family: var(--font-body);
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.dashboard-simulador-campo input:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px var(--overlay-primary-medium);
+}
+
+.dashboard-simulador-resultado {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  background: var(--bg-page);
+  border-radius: 12px;
+  padding: var(--space-4) var(--space-5);
+  margin-bottom: var(--space-5);
+}
+
+.dashboard-simulador-resultado-label {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--text-secondary);
+}
+
+.dashboard-simulador-resultado-valor {
+  font-family: var(--font-display);
+  font-size: 28px;
+  color: var(--color-primary);
+}
+
+.dashboard-simulador-acoes {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.dashboard-simulador-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 150px;
+  background: var(--color-primary);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 10px 18px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  font-family: var(--font-body);
+  transition: background-color var(--transition-fast), box-shadow var(--transition-fast), transform var(--transition-fast);
+}
+
+.dashboard-simulador-btn:hover:not(:disabled) {
+  background: var(--color-primary-dark);
+  box-shadow: var(--shadow-primary-hover);
+  transform: translateY(-1px);
+}
+
+.dashboard-simulador-btn:disabled {
+  opacity: 0.7;
+  cursor: default;
+  transform: none;
+}
+
+.dashboard-simulador-erro {
+  font-size: 13px;
+  color: var(--color-danger);
+}

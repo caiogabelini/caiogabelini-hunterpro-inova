@@ -1,0 +1,301 @@
+.lista-leads-page {
+  min-height: 100vh;
+  padding: var(--space-8) var(--space-8) var(--space-10);
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.lista-leads-header {
+  margin-bottom: var(--space-6);
+}
+
+.lista-leads-eyebrow {
+  font-size: 12px;
+  letter-spacing: 3px;
+  color: var(--color-primary);
+  font-weight: 700;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+
+.lista-leads-title {
+  font-family: var(--font-display);
+  font-weight: 400;
+  letter-spacing: 0.5px;
+  font-size: 34px;
+  margin: 0;
+  color: var(--text-primary);
+}
+
+.lista-leads-status {
+  color: var(--text-secondary);
+  font-size: 14px;
+  padding: var(--space-6);
+  margin: 0;
+}
+
+.lista-leads-erro {
+  color: var(--color-danger);
+}
+
+.lista-leads-muted {
+  color: var(--text-secondary);
+  font-size: 13px;
+  margin: 0;
+  padding: var(--space-6);
+  text-align: center;
+}
+
+/* --- Filtros --- */
+
+.lista-leads-filtros {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-bottom: var(--space-5);
+}
+
+.lista-leads-campo-busca {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 1;
+  min-width: 220px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 9px 14px;
+  color: var(--text-secondary);
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.lista-leads-campo-busca:focus-within {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px var(--overlay-primary-medium);
+}
+
+.lista-leads-campo-busca input {
+  flex: 1;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-size: 14px;
+  color: var(--text-primary);
+  font-family: var(--font-body);
+}
+
+.lista-leads-campo-busca input::placeholder {
+  color: var(--text-muted);
+}
+
+.lista-leads-select {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 9px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  font-family: var(--font-body);
+  cursor: pointer;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.lista-leads-select:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px var(--overlay-primary-medium);
+}
+
+/* --- Card / tabela --- */
+
+.lista-leads-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+
+.lista-leads-tabela-wrap {
+  overflow-x: auto;
+}
+
+.lista-leads-tabela {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.lista-leads-tabela th {
+  text-align: left;
+  padding: var(--space-3) var(--space-4);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.lista-leads-th-ordenavel {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: transparent;
+  border: none;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  text-transform: inherit;
+  letter-spacing: inherit;
+  color: inherit;
+  cursor: pointer;
+  transition: color var(--transition-fast);
+}
+
+.lista-leads-th-ordenavel:hover {
+  color: var(--color-primary);
+}
+
+.lista-leads-icone-ordenacao-inativo {
+  color: var(--text-muted);
+}
+
+.lista-leads-tabela td {
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+  color: var(--text-primary);
+}
+
+.lista-leads-linha {
+  cursor: pointer;
+  transition: background-color var(--transition-fast);
+}
+
+.lista-leads-linha:hover {
+  background: var(--bg-page);
+}
+
+.lista-leads-linha:last-child td {
+  border-bottom: none;
+}
+
+.lista-leads-nome {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.lista-leads-nome-fantasia {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-top: 2px;
+}
+
+.lista-leads-documento {
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.lista-leads-contato-icones {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.lista-leads-contato-on {
+  color: var(--color-success);
+}
+
+.lista-leads-contato-off {
+  color: var(--text-muted);
+}
+
+.lista-leads-score {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.lista-leads-score-valor {
+  font-weight: 700;
+  color: var(--color-primary);
+  white-space: nowrap;
+}
+
+/* Badge de etapa -- mesmo par de cores já usado no dossiê pro pill de
+   status do Kanban (dourado neutro/"em progresso", vermelho só pra
+   "perdido"). */
+.lista-leads-etapa-badge {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  border-radius: 999px;
+  padding: 3px 10px;
+  white-space: nowrap;
+  background: var(--color-orange-bg);
+  color: var(--color-orange-dark);
+}
+
+.lista-leads-etapa-badge-perdido {
+  background: var(--color-danger-bg);
+  color: var(--color-danger);
+}
+
+.lista-leads-data {
+  white-space: nowrap;
+  color: var(--text-secondary);
+}
+
+/* --- Paginação --- */
+
+.lista-leads-paginacao {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-5);
+  border-top: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+
+.lista-leads-paginacao-info {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.lista-leads-paginacao-botoes {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.lista-leads-paginacao-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: border-color var(--transition-fast), color var(--transition-fast);
+}
+
+.lista-leads-paginacao-btn:hover:not(:disabled) {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+.lista-leads-paginacao-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}

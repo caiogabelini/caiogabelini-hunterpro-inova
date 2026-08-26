@@ -12,12 +12,13 @@ explicitamente em *todos* os entrypoints — ``app/main.py``,
 ``app/workers/celery_app.py``, ``alembic/env.py`` e qualquer script de
 ``scripts/``.
 
-Hoje só existe o ``Lead``. A convenção fica montada desde já justamente pra
-que ``User``, ``BuscaLeads`` e ``LeadMessage`` entrem só adicionando uma
-linha aqui, sem ninguém precisar redescobrir a lição.
+O ``User`` entrou na Fase 8a exatamente como previsto: uma linha aqui.
+``BuscaLeads`` e ``LeadMessage`` seguem o mesmo caminho quando as fases
+delas chegarem.
 """
 
 from app.core.database import Base
 from app.models.lead import Lead
+from app.models.user import User, UserRole
 
-__all__ = ["Base", "Lead"]
+__all__ = ["Base", "Lead", "User", "UserRole"]

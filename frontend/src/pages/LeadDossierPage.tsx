@@ -8,7 +8,6 @@ import {
   Gauge,
   Globe,
   Lightbulb,
-  Link2,
   Loader2,
   Mail,
   MessageCircle,
@@ -38,6 +37,7 @@ import {
 import { PriorityBadge } from "../components/PriorityBadge";
 import { useAuth } from "../context/AuthContext";
 import { formatarNumeroWhatsapp, formatCurrencyBRL, formatDate, formatRelative } from "../format";
+import { apenasDigitos } from "../documento";
 import { getEmailsSecundarios, labelTipoEmail } from "../emailsSecundarios";
 import { INSIGHTS_DISPONIVEIS, getInsights } from "../insights";
 import { MENSAGEM_LIMITE_ATINGIDO, statusLimiteIa } from "../limitesIa";
@@ -50,6 +50,7 @@ import "./LeadDossierPage.css";
 import { formatarDocumento, rotuloDocumento, rotuloEntidade, rotuloNome } from "../documento";
 import { MENSAGENS_DISPONIVEIS, carregarMensagens } from "../mensagens";
 import { getDadosNicho, type DadosNichoSicor } from "../api";
+import { getContatos, temAlgumCanal } from "../contatos";
 
 type Aba = "dados" | "contatos" | "analise" | "mensagens" | "insights";
 
@@ -330,6 +331,7 @@ function AbaNav({ ativa, onChange }: { ativa: Aba; onChange: (aba: Aba) => void 
 
 function AbaDados({ lead }: { lead: Lead }) {
   const nicho = getDadosNicho(lead.dados_nicho);
+  const contatos = getContatos(lead);
   return (
     <>
       {/* ⚠️ Aqui ficava a SecaoPgfn (dívida ativa) do Minotto — o sinal
@@ -361,13 +363,16 @@ function AbaDados({ lead }: { lead: Lead }) {
 
         <section className="dossier-card">
           <SectionHeading icon={Phone}>Contato</SectionHeading>
+          {/* ⚠️ Mesma fonte que a aba Contatos usa (`getContatos`). As duas
+              abas mostravam dados diferentes do mesmo lead até 26/08/2026
+              justamente por lerem campos diferentes — ver contatos.ts. */}
           <dl>
-            <Campo label="Telefone" valor={lead.telefone} />
-            <CampoWhatsapp telefone={lead.telefone} ativo={nicho.whatsapp_ativo} />
-            <CampoTelefoneSecundario numero={lead.telefone_secundario} />
-            <CampoEmail email={lead.email} validado={nicho.email_status === "valid" || nicho.email_status === "catch-all"} />
-            <Campo label="Decisor" valor={nicho.decisor} />
-            <Campo label="Fonte do decisor" valor={nicho.fonte_decisor} />
+            <Campo label="Telefone" valor={contatos.telefone} />
+            <CampoWhatsapp telefone={contatos.telefone} ativo={contatos.whatsappAtivo} />
+            <CampoTelefoneSecundario numero={contatos.telefoneSecundario} />
+            <CampoEmail email={contatos.email} validado={contatos.emailValidado} />
+            <Campo label="Decisor" valor={contatos.decisor} />
+            <Campo label="Fonte do decisor" valor={contatos.fonteDecisor} />
           </dl>
         </section>
 
@@ -480,21 +485,21 @@ function OutrosEmails({ lead }: { lead: Lead }) {
 }
 
 function AbaContatos({ lead }: { lead: Lead }) {
-  const numeroWhatsapp = formatarNumeroWhatsapp(lead.telefone);
-  const temWhatsapp = !!lead.whatsapp_ativo && !!numeroWhatsapp;
-  const temEmail = !!lead.email;
-  const temLinkedin = !!lead.linkedin_decisor;
+  // ⚠️ **Bug corrigido em 26/08/2026.** Esta aba lia `lead.decisor_nome`, um
+  // campo do Minotto que esta API nunca enviou. Como é opcional no tipo,
+  // `undefined` passava batido pelo TypeScript e a aba concluía "não tem
+  // decisor" — enquanto a aba Dados, lendo `dados_nicho`, exibia nome,
+  // telefone, WhatsApp e e-mail validado do MESMO lead. Agora as duas passam
+  // por `getContatos`. Ver contatos.ts pro quadro completo.
+  const contatos = getContatos(lead);
+  const numeroWhatsapp = formatarNumeroWhatsapp(contatos.telefone);
+  const mostrarWhatsapp = contatos.whatsappAtivo && !!numeroWhatsapp;
 
-  if (!lead.decisor_nome) {
+  if (!contatos.decisor && !temAlgumCanal(contatos)) {
     return (
       <section className="dossier-card">
         <SectionHeading icon={Users}>Contatos</SectionHeading>
-        <p className="dossier-muted">Nenhum decisor identificado ainda pra este lead.</p>
-        {/* Renderizado TAMBÉM aqui de propósito: os e-mails secundários
-            são do DOMÍNIO, não do decisor. Um lead sem decisor
-            identificado mas com contato@clinica.com.br é justamente onde
-            eles mais valem -- escondê-los junto com o resto da aba seria
-            perder o único contato disponível. */}
+        <p className="dossier-muted">Nenhum contato identificado ainda pra este lead.</p>
         <OutrosEmails lead={lead} />
       </section>
     );
@@ -505,31 +510,44 @@ function AbaContatos({ lead }: { lead: Lead }) {
       <SectionHeading icon={Users}>Contatos</SectionHeading>
       <ul className="dossier-contatos-lista">
         <li className="dossier-contato-card">
-          <div className="dossier-contato-nome">{lead.decisor_nome}</div>
+          {/* Sem decisor resolvido, os canais ainda valem: o telefone é do
+              produtor, mesmo que a API Full não tenha devolvido o nome. */}
+          <div className="dossier-contato-nome">
+            {contatos.decisor ?? "Decisor não identificado"}
+          </div>
+          {contatos.fonteDecisor && (
+            <div className="dossier-contato-fonte">via {contatos.fonteDecisor}</div>
+          )}
           <div className="dossier-contato-canais">
-            {temWhatsapp && (
+            {mostrarWhatsapp && (
               <a className="dossier-chip" href={`https://wa.me/${numeroWhatsapp}`} target="_blank" rel="noreferrer">
                 <MessageCircle size={13} />
                 <span>WhatsApp</span>
               </a>
             )}
-            {temEmail && (
-              <a className="dossier-chip" href={`mailto:${lead.email}`}>
+            {contatos.telefone && (
+              <a className="dossier-chip" href={`tel:+${apenasDigitos(contatos.telefone)}`}>
+                <Phone size={13} />
+                <span>{contatos.telefone}</span>
+              </a>
+            )}
+            {contatos.telefoneSecundario && (
+              // Rotulado como alternativo e SEM chip de WhatsApp: a validação
+              // da Evolution roda só no número principal (ver a mesma regra
+              // no card Contato da aba Dados).
+              <a className="dossier-chip dossier-chip-secundario" href={`tel:+${apenasDigitos(contatos.telefoneSecundario)}`}>
+                <Phone size={13} />
+                <span>{contatos.telefoneSecundario} (alternativo)</span>
+              </a>
+            )}
+            {contatos.email && (
+              <a className="dossier-chip" href={`mailto:${contatos.email}`}>
                 <Mail size={13} />
-                <span>E-mail</span>
+                <span>{contatos.email}</span>
+                {contatos.emailValidado && <CheckCircle2 size={12} aria-label="validado" />}
               </a>
             )}
-            {lead.linkedin_decisor && (
-              // Link2 (ícone genérico), não um logo da LinkedIn -- essa
-              // versão do lucide-react (1.33) não exporta mais ícones de
-              // marca (removidos por questão de trademark); o texto "LinkedIn"
-              // ao lado do ícone já deixa claro o canal.
-              <a className="dossier-chip" href={lead.linkedin_decisor} target="_blank" rel="noreferrer">
-                <Link2 size={13} />
-                <span>LinkedIn</span>
-              </a>
-            )}
-            {!temWhatsapp && !temEmail && !temLinkedin && (
+            {!mostrarWhatsapp && !contatos.telefone && !contatos.email && (
               <span className="dossier-muted">Nenhum canal confirmado ainda.</span>
             )}
           </div>

@@ -181,17 +181,32 @@ export interface Lead {
   rqe_fonte?: string | null;
   cnes_codigo?: string | null;
 
-  /** ⛔ Sinais do enriquecimento que o backend calcula mas NÃO persiste em
-   *  coluna própria — hoje moram dentro de `dados_nicho` (ver
-   *  `DadosNichoSicor`). Declarados aqui porque as telas do Minotto os leem
-   *  no topo do lead; a Fase 8 escolhe entre promover a coluna ou reescrever
-   *  a leitura pra passar por `getDadosNicho`. */
+  /** ✅ Sinais do enriquecimento que o backend **desempacota de
+   *  `dados_nicho` e envia no topo** desde a Fase 8a (ver `montar_lead_read`
+   *  em app/api/routes/leads.py). Confirmado contra a resposta real em
+   *  26/08/2026 — não presuma, a lista abaixo foi conferida chave a chave.
+   *
+   *  ⚠️ **Leia por `getContatos` (contatos.ts), não daqui direto.** Ter dois
+   *  caminhos de leitura pro mesmo dado foi exatamente o que produziu o bug
+   *  da aba Contatos: uma aba lia `dados_nicho`, a outra lia um campo que
+   *  não existe, e elas discordaram sobre o mesmo lead. */
+  decisor?: string | null;
   whatsapp_ativo?: boolean | null;
+  email_status?: string | null;
+
+  /** ⛔ **Fantasmas do Minotto — a API nunca enviou nenhum destes.**
+   *
+   *  Continuam declarados porque componentes portados ainda os mencionam, e
+   *  removê-los do tipo transformaria cada uso num erro de compilação de uma
+   *  vez só. Mas o perigo é justamente este: por serem opcionais, lê-los
+   *  devolve `undefined` em silêncio, sem erro de tipo — e a tela conclui
+   *  "não tem". Foi assim que `decisor_nome` esvaziou a aba Contatos inteira
+   *  de um lead que tinha todos os dados. Antes de usar qualquer um destes,
+   *  confirme na resposta real da API. */
+  decisor_nome?: string | null;
   email_validado?: boolean | null;
   emails_secundarios?: unknown;
-  decisor_nome?: string | null;
   site_scrape_sucesso?: boolean | null;
-  instagram?: string | null;
   servicos?: string | null;
 
   /** ⛔ Não existem e não estão no roadmap: LinkedIn nunca foi fonte deste

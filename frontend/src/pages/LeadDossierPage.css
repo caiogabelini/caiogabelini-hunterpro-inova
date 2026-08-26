@@ -646,6 +646,22 @@
   transition: border-color var(--transition-fast), color var(--transition-fast), background-color var(--transition-fast);
 }
 
+/* Chip de contato alternativo: mesma forma dos demais, com traço pontilhado
+   pra sinalizar "não verificado". A palavra "(alternativo)" no rótulo é que
+   carrega a informação -- o estilo só reforça, nunca é a única pista (mesma
+   regra já aplicada no card Contato da aba Dados). */
+.dossier-chip-secundario {
+  border-style: dashed;
+}
+
+.dossier-contato-fonte {
+  font-size: 11px;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  margin-bottom: 8px;
+}
+
 .dossier-chip:hover {
   border-color: var(--color-primary);
   color: var(--color-primary);

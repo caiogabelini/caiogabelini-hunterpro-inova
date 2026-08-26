@@ -218,6 +218,60 @@ def enriquecer_selecionados(
     return enriquecer_lote_completo(selecionados, **clientes)
 
 
+def _chave_telefone(numero: str | None) -> str:
+    """Identidade de um telefone, imune a formatação e a código de país.
+
+    ``+5545999887766`` (e164 da API Full), ``5545999887766`` (o que a Evolution
+    devolve em ``numero_formatado``) e ``45 99988-7766`` são **o mesmo
+    telefone**. Sem normalizar, o número já escolhido como principal
+    reapareceria como "alternativo" só por estar escrito diferente — e o
+    dossiê mostraria o mesmo contato duas vezes, sugerindo duas formas de
+    falar com a pessoa onde só existe uma.
+
+    Reusa ``whatsapp.formatar_numero``, a mesma função que o pipeline usa pra
+    montar o número que vai pra Evolution, então as duas pontas concordam por
+    construção. Quando ela não consegue normalizar (número truncado, DDD
+    estranho), cai nos dígitos crus — comparação pior, mas nunca pior que
+    comparar a string formatada.
+    """
+    from app.services.whatsapp import formatar_numero
+
+    return formatar_numero(numero) or "".join(
+        c for c in (numero or "") if c.isdigit()
+    )
+
+
+def escolher_telefones(enriquecido) -> tuple[str | None, str | None]:
+    """``(principal, secundário)`` a partir da fila de telefones do lead.
+
+    **Principal**: o número que a Evolution confirmou, se houve validação;
+    senão o primeiro da fila — que já vem ordenado por preferência, celular
+    antes de fixo (ver ``telefones_ordenados`` em ``enriquecimento.py``).
+
+    **Secundário**: o próximo número que não seja o principal. É contato
+    alternativo, nada mais: não passou por validação de WhatsApp e não deve
+    ser apresentado como se tivesse passado.
+
+    ⚠️ Guarda **um** alternativo, mesmo quando a fonte traz mais (já vimos um
+    CPF real com 5 números). Os demais são descartados. Se um dia valer a pena
+    guardar todos, o padrão pronto é o ``emails_secundarios`` do Minotto —
+    coluna JSON com a lista inteira, sob o argumento de que o bureau cobra por
+    consulta e não por número devolvido, então o resto já está pago.
+    """
+    telefones = list(getattr(enriquecido, "telefones", ()) or [])
+    validado = getattr(enriquecido, "whatsapp_numero", "") or ""
+
+    principal = validado or (telefones[0] if telefones else None)
+    if not principal:
+        return None, None
+
+    chave_principal = _chave_telefone(principal)
+    for numero in telefones:
+        if _chave_telefone(numero) != chave_principal:
+            return principal, numero
+    return principal, None
+
+
 def persistir_leads(sessao, enriquecidos: Sequence) -> int:
     """Grava os leads enriquecidos, com score e prioridade preenchidos.
 
@@ -251,12 +305,13 @@ def persistir_leads(sessao, enriquecidos: Sequence) -> int:
                     "decisor": enriquecido.decisor or None,
                 }
             )
+            principal, secundario = escolher_telefones(enriquecido)
             campos = {
                 "nome": enriquecido.nome or candidato.nome or candidato.documento,
                 "municipio": candidato.municipio,
                 "uf": candidato.uf,
-                "telefone": enriquecido.whatsapp_numero
-                or (enriquecido.telefones[0] if enriquecido.telefones else None),
+                "telefone": principal,
+                "telefone_secundario": secundario,
                 "email": enriquecido.emails[0] if enriquecido.emails else None,
                 "site": enriquecido.site_url or None,
                 "score": enriquecido.score,

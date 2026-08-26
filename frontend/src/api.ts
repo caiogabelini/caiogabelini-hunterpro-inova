@@ -113,6 +113,12 @@ export interface Lead {
   municipio?: string | null;
   uf?: string | null;
   telefone?: string | null;
+  /** ✅ Existe desde 26/08/2026 (migration `9b12f4c7d833`). Contato
+   *  **alternativo**, quando a fonte trouxe mais de um número. ⚠️ NÃO é o
+   *  número do WhatsApp — o validado é sempre `telefone`. Este aqui não
+   *  passou por validação nenhuma e não deve ser apresentado como se
+   *  tivesse passado. `null` = a fonte trouxe um número só. */
+  telefone_secundario?: string | null;
   email?: string | null;
   site?: string | null;
   score?: number | null;

@@ -364,6 +364,7 @@ function AbaDados({ lead }: { lead: Lead }) {
           <dl>
             <Campo label="Telefone" valor={lead.telefone} />
             <CampoWhatsapp telefone={lead.telefone} ativo={nicho.whatsapp_ativo} />
+            <CampoTelefoneSecundario numero={lead.telefone_secundario} />
             <CampoEmail email={lead.email} validado={nicho.email_status === "valid" || nicho.email_status === "catch-all"} />
             <Campo label="Decisor" valor={nicho.decisor} />
             <Campo label="Fonte do decisor" valor={nicho.fonte_decisor} />
@@ -1059,6 +1060,31 @@ function CampoIndicador({
       <dt>{label}</dt>
       <dd>
         <Indicador ativo={ativo} textoAtivo={textoAtivo} textoInativo={textoInativo} />
+      </dd>
+    </div>
+  );
+}
+
+/**
+ * Segundo número do lead, quando a fonte trouxe mais de um.
+ *
+ * ⚠️ Rotulado como **alternativo**, e sem badge de WhatsApp de propósito: a
+ * validação da Evolution roda só no número principal, então dizer qualquer
+ * coisa sobre WhatsApp aqui seria afirmar o que ninguém verificou. O aviso
+ * embaixo existe pra que o vendedor saiba disso antes de ligar, em vez de
+ * descobrir tentando.
+ *
+ * Só renderiza quando existe — lead com um telefone só não ganha linha vazia
+ * (mesmo comportamento de `Campo` com valor nulo).
+ */
+function CampoTelefoneSecundario({ numero }: { numero?: string | null }) {
+  if (!numero) return null;
+  return (
+    <div className="dossier-campo">
+      <dt>Telefone alternativo</dt>
+      <dd className="dossier-telefone-secundario">
+        <span>{numero}</span>
+        <span className="dossier-telefone-secundario-nota">não verificado</span>
       </dd>
     </div>
   );

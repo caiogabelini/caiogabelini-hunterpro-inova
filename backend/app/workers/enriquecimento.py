@@ -147,6 +147,13 @@ class LeadEnriquecido:
     candidato: Candidato
     nome: str = ""
     decisor: str = ""
+    #: **Ordenados por preferência de contato**, melhor candidato primeiro.
+    #: Quem depende disso: a etapa de WhatsApp (testa ``telefones[0]``) e
+    #: ``persistir_leads`` (grava o primeiro como principal e o segundo como
+    #: alternativo). Duas coisas mantêm a ordem: ``telefones_ordenados`` põe o
+    #: celular na frente na origem (CPF/API Full), e o scrape de site insere
+    #: um número de ``wa.me`` na posição 0 — que é melhor ainda, porque é
+    #: WhatsApp confirmado e não inferido.
     telefones: tuple[str, ...] = ()
     emails: tuple[str, ...] = ()
     #: Fonte que resolveu o decisor: "api_full", "brasil_api" ou "" (nenhuma).
@@ -194,6 +201,43 @@ def _pular(motivo: str, etapa: str = ETAPA_DECISOR) -> dict[str, str]:
     return {"etapa": etapa, "motivo": motivo}
 
 
+def telefones_ordenados(resultado: api_full.ResultadoApiFull) -> tuple[str, ...]:
+    """Telefones da API Full em **ordem de preferência**, celular primeiro.
+
+    ⚠️ **Bug real corrigido em 26/08/2026**, achado na primeira busca paga.
+    Antes esta conversão era ``tuple(t.e164 for t in resultado.telefones)`` —
+    ordem crua do bureau. Como ``ResultadoApiFull.telefone_preferencial``
+    existia mas **ninguém chamava**, um CPF que viesse com fixo em primeiro e
+    celular em segundo fazia a etapa de WhatsApp testar o fixo, falhar, e
+    nunca chegar no celular.
+
+    O efeito não era um erro visível: era um lead marcado "sem WhatsApp" que
+    tinha WhatsApp. Isso sub-representa justamente o sinal de peso 15 no
+    score, o que a cliente mais valoriza — e some no meio de leads que
+    realmente não têm.
+
+    A API Full **não diz o tipo** (``TIPO_TELEFONE`` vem vazio); a inferência
+    é por contagem de dígitos, em ``Telefone.eh_celular``. E não há garantia
+    de ordem na resposta, então depender da posição era sorte, não contrato.
+
+    Deduplica por número: o mesmo telefone repetido na resposta (já visto em
+    dado real) não pode ocupar duas vagas da fila.
+    """
+    # `celulares + telefones` é exatamente a expressão de
+    # `ResultadoApiFull.telefone_preferencial`, generalizada da primeira
+    # posição pra fila inteira: todos os celulares na frente (na ordem do
+    # bureau), depois o resto, e o dedup remove a segunda aparição dos
+    # celulares. Assim `[0]` É o `telefone_preferencial` por construção — há
+    # teste amarrando as duas pontas.
+    #
+    # ⚠️ Generalizar importa por causa do telefone alternativo: promover só o
+    # primeiro celular deixaria um FIXO na frente de um SEGUNDO celular, e o
+    # contato de backup do dossiê viraria o pior número disponível.
+    ordenados = [t.e164 for t in resultado.celulares]
+    ordenados.extend(t.e164 for t in resultado.telefones)
+    return tuple(dict.fromkeys(ordenados))
+
+
 def resolver_decisor_cpf(
     documento: str, *, cliente: Any = None
 ) -> tuple[str, str, tuple[str, ...], tuple[str, ...], dict[str, str] | None]:
@@ -201,18 +245,32 @@ def resolver_decisor_cpf(
 
     Em pessoa física o produtor **é** o decisor — não há quadro societário a
     interpretar, ao contrário do CNPJ.
+
+    ``telefones`` sai **ordenado por preferência** (ver ``telefones_ordenados``),
+    não na ordem crua da resposta.
     """
     resultado = api_full.consultar_cpf(documento, cliente=cliente)
     if not resultado.ok:
         return "", "", (), (), _pular(resultado.erro or "API Full sem dado")
-    telefones = tuple(t.e164 for t in resultado.telefones)
-    return resultado.nome, resultado.nome, telefones, resultado.emails, None
+    return (
+        resultado.nome,
+        resultado.nome,
+        telefones_ordenados(resultado),
+        resultado.emails,
+        None,
+    )
 
 
 def resolver_decisor_cnpj(
     documento: str, *, cliente: Any = None
 ) -> tuple[str, str, tuple[str, ...], tuple[str, ...], dict[str, str] | None]:
-    """CNPJ via BrasilAPI. O decisor sai do quadro societário (QSA)."""
+    """CNPJ via BrasilAPI. O decisor sai do quadro societário (QSA).
+
+    ⚠️ Diferente do CPF, aqui **não há o que priorizar**: o cliente da
+    BrasilAPI lê um único campo (``ddd_telefone_1``), então a tupla tem no
+    máximo um número e não existe ambiguidade de ordem. Verificado em
+    26/08/2026, junto com a correção de ordenação do lado do CPF.
+    """
     resultado = brasil_api.consultar_cnpj(documento, cliente=cliente)
     if not resultado.ok:
         return "", "", (), (), _pular(resultado.erro or "BrasilAPI sem dado")
@@ -266,8 +324,8 @@ def enriquecer_decisor(
     # de dependência da §3. Cada uma exige sua própria decisão de custo:
     #   - search_google_places      (site, rating, telefone) — depende do nome
     #   - enrich_site_firecrawl     (scrape + wa.me) — depende do site
-    #   - validate_whatsapp         (Evolution API) — prioriza CELULAR; a
-    #     API Full não diz o tipo, então usar Telefone.eh_celular
+    #   - validate_whatsapp         (Evolution API) — FEITO: a priorização de
+    #     celular vive em `telefones_ordenados` desde 26/08/2026
     #   - enrich_email              (Hunter.io + ZeroBounce) — a API Full já
     #     devolve e-mail em parte dos casos; medir quanto isso reduz o
     #     consumo do Hunter ANTES de contratar volume lá
@@ -455,10 +513,14 @@ def enriquecer_lead(
     if not telefones:
         puladas.append({"etapa": ETAPA_WHATSAPP, "motivo": "lead sem telefone"})
     else:
+        # `telefones` chega ordenado por preferência (ver LeadEnriquecido),
+        # então [0] é o melhor candidato: WhatsApp do site > celular > fixo.
+        # ⚠️ Não trocar por outro índice sem revisitar `telefones_ordenados`.
+        numero_alvo = telefones[0]
         resultado_wpp = _rodar_etapa(
             ETAPA_WHATSAPP,
             lambda: whatsapp_service.validar_whatsapp(
-                telefones[0], cliente=cliente_evolution
+                numero_alvo, cliente=cliente_evolution
             ),
             puladas,
         )

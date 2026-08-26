@@ -101,6 +101,7 @@ def montar_lead_read(lead: Lead) -> LeadRead:
         municipio=lead.municipio,
         uf=lead.uf,
         telefone=lead.telefone,
+        telefone_secundario=lead.telefone_secundario,
         email=lead.email,
         site=lead.site,
         score=lead.score,

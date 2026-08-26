@@ -120,6 +120,18 @@ class Lead(Base):
 
     # --- Contato ----------------------------------------------------------
     telefone: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    #: Segundo número, quando a fonte traz mais de um. **Contato alternativo**,
+    #: não o do WhatsApp: o principal (``telefone``) é o número validado na
+    #: Evolution ou, na falta de validação, o preferencial da fila.
+    #:
+    #: ⚠️ Coluna própria, e não uma chave em ``dados_nicho``, porque telefone
+    #: é dado genérico de contato — ``telefone`` já é coluna, e partir o mesmo
+    #: conceito entre uma coluna e um JSON esconderia o segundo número de quem
+    #: lê o model. Mesmo tratamento que o Minotto dá a ``emails_secundarios``.
+    #:
+    #: ``None`` = a fonte trouxe um número só (ou nenhum). Nunca guarda uma
+    #: repetição do principal — ver ``persistir_leads``.
+    telefone_secundario: Mapped[str | None] = mapped_column(String(30), nullable=True)
     email: Mapped[str | None] = mapped_column(String(255), nullable=True)
     site: Mapped[str | None] = mapped_column(String(500), nullable=True)
 

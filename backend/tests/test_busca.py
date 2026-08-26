@@ -232,10 +232,22 @@ class TestVolumeReal:
         assert len(estabs) == 588
 
     def test_a_cota_contratada_e_preenchida_so_pela_fase_1(self, populacoes) -> None:
-        """60 candidatos (50 × 1,2) contra 1.439 disponíveis na Fase 1."""
+        """A cota configurada cabe inteira na Fase 1 (2.806 disponíveis).
+
+        ⚠️ A expectativa sai de ``settings.cota_pre_selecao``, não do número
+        60 fixo que estava aqui antes. O 60 acoplava o teste ao ``.env`` da
+        máquina: em 26/08/2026 a suíte quebrou porque ``LEADS_POR_BUSCA``
+        estava em 3 (baixado de propósito, pra limitar o gasto da primeira
+        busca paga real) — falha que não dizia nada sobre a pré-seleção.
+
+        A invariante que importa é a mesma em qualquer cota: enquanto a Fase
+        1 tiver candidatos de sobra, ela preenche tudo e a Fase 2 nem roda.
+        """
         leads, estabs = populacoes
-        p = pre_selecionar(leads, estabs, cota=settings.cota_pre_selecao)
-        assert p.selecionados_fase1 == 60
+        cota = settings.cota_pre_selecao
+        assert cota <= len(leads), "cota maior que a Fase 1 mudaria o cenário"
+        p = pre_selecionar(leads, estabs, cota=cota)
+        assert p.selecionados_fase1 == cota
         assert p.selecionados_fase2 == 0
         assert not p.fase2_acionada
         assert p.cota_preenchida

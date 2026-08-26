@@ -466,6 +466,29 @@
   text-decoration: underline;
 }
 
+/* Telefone alternativo: mesmo peso de valor dos demais campos, com uma nota
+   discreta embaixo. A nota existe porque a validação de WhatsApp roda só no
+   número principal -- sem ela, o vendedor leria dois números como
+   equivalentes e poderia começar pelo que ninguém verificou. */
+.dossier-telefone-secundario {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+}
+
+.dossier-telefone-secundario-nota {
+  font-size: 11px;
+  font-weight: 500;
+  /* ⚠️ `--text-secondary` (4,83:1, passa AA), NÃO `--text-muted` (2,54:1).
+     O próprio token do muted diz "nunca como única forma de transmitir
+     informação" -- e aqui o texto É a informação: é o que avisa que este
+     número não passou pela validação de WhatsApp. */
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
 .dossier-campo-vazio {
   color: var(--text-muted) !important;
   font-weight: 400 !important;

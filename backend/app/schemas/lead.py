@@ -49,6 +49,9 @@ class LeadRead(BaseModel):
     municipio: str | None = None
     uf: str | None = None
     telefone: str | None = None
+    #: Contato alternativo, quando a fonte trouxe mais de um número. **Não**
+    #: é o número do WhatsApp — esse é sempre ``telefone``.
+    telefone_secundario: str | None = None
     email: str | None = None
     site: str | None = None
     score: int | None = None

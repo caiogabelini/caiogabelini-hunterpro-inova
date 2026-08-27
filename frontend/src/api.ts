@@ -68,20 +68,68 @@ export interface InsightsIA {
   cta_sugerido: string;
 }
 
-/** Mesmo shape de LeadMessageRead em app/schemas/lead_message.py --
- * uma mensagem de abordagem gerada, já persistida (uma linha de
- * histórico por canal em LeadMessage). `canal` tipado como união
- * literal porque é o mesmo conjunto fechado de CanalMensagem no
- * backend (app/models/lead_message.py) -- Instagram de propósito fora. */
+/** `canal` tipado como união literal porque é o mesmo conjunto fechado
+ * de CanalMensagem no backend (app/models/lead_message.py) -- Instagram
+ * de propósito fora, não há integração de envio. */
 export type CanalAbordagem = "email" | "whatsapp";
 
+/** `pendente` | `enviada` -- mesmo conjunto de StatusMensagem no backend.
+ *
+ * Não existe "falhou" nem "respondida": o produto não envia nada. Quem
+ * envia é a Carolina, no WhatsApp/e-mail dela; `enviada` é ela dizendo
+ * "já mandei esta", e nada mais. */
+export type StatusMensagem = "pendente" | "enviada";
+
+/** Mesmo shape de LeadMessageRead em app/schemas/lead_message.py -- UMA
+ * mensagem, já dentro de uma sequência.
+ *
+ * ⚠️ **Fase 11a mudou o que uma geração produz.** Antes cada clique em
+ * "Gerar" criava uma mensagem solta; agora cria uma SEQUÊNCIA coordenada
+ * (WhatsApp 3, e-mail 2) que compartilha um `grupo_id`. Daí `ordem`,
+ * `status` e `enviada_em` -- campos que uma mensagem avulsa não tinha
+ * onde usar. */
 export interface LeadMessage {
   id: string;
   lead_id: string;
   canal: CanalAbordagem;
+  /** Posição na sequência: 1 é o primeiro contato. */
+  ordem: number;
+  status: StatusMensagem;
   conteudo: string;
   assunto?: string | null;
   gerado_em: string;
+  /** Quando foi marcada como enviada. `null` enquanto pendente. */
+  enviada_em?: string | null;
+}
+
+/** Mesmo shape de SequenciaAbordagemRead -- uma geração inteira.
+ *
+ * ⚠️ `proxima_ordem` é a regra de ordem vindo PRONTA do backend: a ordem
+ * da única mensagem que ele aceita marcar como enviada agora, ou `null`
+ * quando a sequência acabou. A tela usa esse número em vez de deduzir
+ * "a primeira pendente" -- se deduzisse, existiriam duas versões da
+ * regra e elas divergiriam na primeira exceção (ver o docstring do
+ * schema no backend, que diz isso do lado de lá). */
+export interface SequenciaAbordagem {
+  grupo_id: string;
+  canal: CanalAbordagem;
+  /** Instante da geração -- o mesmo para todas as mensagens do grupo. */
+  gerado_em: string;
+  total: number;
+  proxima_ordem: number | null;
+  mensagens: LeadMessage[];
+}
+
+/** Mesmo shape de MensagensDoLeadRead -- a sequência ATIVA de cada canal.
+ *
+ * ⚠️ **Objeto por canal, não lista.** Até a Fase 10 o `GET /mensagens`
+ * devolvia `LeadMessage[]` e a tela fazia `.find(m => m.canal === ...)`.
+ * Canal sem geração vem `null`; as sequências anteriores continuam no
+ * banco mas não voltam aqui (a aba mostra a cadência vigente, não duas
+ * concorrentes). */
+export interface MensagensDoLead {
+  email: SequenciaAbordagem | null;
+  whatsapp: SequenciaAbordagem | null;
 }
 
 /**
@@ -380,6 +428,22 @@ export class LimiteIaError extends Error {
   }
 }
 
+/** Lançada no 422 de `PATCH .../mensagens/{id}/enviada` -- a mensagem
+ * não é a próxima pendente da sequência, ou já foi marcada.
+ *
+ * Existe pelo mesmo motivo de `LimiteIaError`: sem ela, quem chama cairia
+ * no `catch` genérico e mostraria "não foi possível" para um caso em que
+ * o backend explicou exatamente o que houve ("a próxima mensagem pendente
+ * é a 1 de 3"). `message` carrega o `detail` do backend VERBATIM -- a
+ * tela exibe esse texto em vez de reescrevê-lo, pra que a regra de ordem
+ * tenha uma redação só, do lado que a decide. */
+export class SequenciaOrdemError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SequenciaOrdemError";
+  }
+}
+
 /** Lançada quando o backend devolve 429 no LOGIN -- limite de tentativas
  * atingido pra aquele e-mail (ver app/core/rate_limit.py).
  *
@@ -486,20 +550,55 @@ export async function fetchLead(token: string, leadId: string): Promise<Lead> {
   return res.json();
 }
 
-export async function fetchMensagens(token: string, leadId: string): Promise<LeadMessage[]> {
+/** ⚠️ Devolve `{email, whatsapp}`, não mais uma lista -- ver
+ * `MensagensDoLead`. Quem consome deve passar por `carregarMensagens`
+ * (mensagens.ts), que normaliza o shape e nunca rejeita. */
+export async function fetchMensagens(token: string, leadId: string): Promise<MensagensDoLead> {
   const res = await fetch(`${API_URL}/api/leads/${leadId}/mensagens`, { headers: authHeaders(token) });
   if (res.status === 401) throw new UnauthorizedError();
   if (!res.ok) throw new Error(await parseErrorDetail(res));
   return res.json();
 }
 
-export async function gerarAbordagemCanal(token: string, leadId: string, canal: CanalAbordagem): Promise<LeadMessage> {
+/** Gera a sequência INTEIRA do canal -- 3 mensagens no WhatsApp, 2 no
+ * e-mail -- numa chamada paga só, e devolve o grupo novo. Chamar de novo
+ * cria outra sequência e consome mais uma das gerações permitidas; a
+ * anterior vira histórico no banco e some da tela. */
+export async function gerarAbordagemCanal(token: string, leadId: string, canal: CanalAbordagem): Promise<SequenciaAbordagem> {
   const res = await fetch(`${API_URL}/api/leads/${leadId}/gerar-abordagem/${canal}`, {
     method: "POST",
     headers: authHeaders(token),
   });
   if (res.status === 401) throw new UnauthorizedError();
   if (res.status === 429) throw new LimiteIaError(await parseErrorDetail(res));
+  if (!res.ok) throw new Error(await parseErrorDetail(res));
+  return res.json();
+}
+
+/**
+ * Marca uma mensagem como enviada. **Não envia nada** -- a Carolina manda
+ * pelo WhatsApp/e-mail dela e só registra aqui.
+ *
+ * Devolve a sequência inteira já atualizada (status, `enviada_em` e
+ * `proxima_ordem` novos), então quem chama substitui o grupo pelo que
+ * voltou em vez de remendar o estado local -- o servidor é quem sabe qual
+ * é a próxima.
+ *
+ * ⚠️ O 422 vira `SequenciaOrdemError` com o texto do backend intacto:
+ * pular etapa e remarcar uma já enviada são erros que ELE explica, e
+ * reescrever aqui daria duas redações da mesma regra.
+ */
+export async function marcarMensagemEnviada(
+  token: string,
+  leadId: string,
+  mensagemId: string,
+): Promise<SequenciaAbordagem> {
+  const res = await fetch(`${API_URL}/api/leads/${leadId}/mensagens/${mensagemId}/enviada`, {
+    method: "PATCH",
+    headers: authHeaders(token),
+  });
+  if (res.status === 401) throw new UnauthorizedError();
+  if (res.status === 422) throw new SequenciaOrdemError(await parseErrorDetail(res));
   if (!res.ok) throw new Error(await parseErrorDetail(res));
   return res.json();
 }

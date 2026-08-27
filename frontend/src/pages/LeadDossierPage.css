@@ -738,10 +738,23 @@
   padding: 6px 14px;
 }
 
+/* ⚠️ Coluna, não grade de 2 colunas como era até a Fase 10.
+   A ordem dos canais é informação (WhatsApp primeiro — é o canal que a
+   maioria dos leads da Carolina responde, ver CANAIS_EM_ORDEM em
+   mensagens.ts), e lado a lado essa ordem vira "esquerda/direita", que não
+   sugere sequência nenhuma. Empilhado também dá largura ao texto: agora são
+   2 ou 3 mensagens por canal, não uma. */
 .dossier-abordagem-canais {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  display: flex;
+  flex-direction: column;
   gap: var(--space-4);
+}
+
+.dossier-abordagem-explicacao {
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  margin: 0 0 var(--space-4);
 }
 
 .dossier-abordagem-canal {
@@ -752,12 +765,116 @@
 }
 
 .dossier-abordagem-canal-titulo {
+  display: flex;
+  align-items: center;
+  gap: 7px;
   font-family: var(--font-display);
   font-weight: 400;
   letter-spacing: 0.3px;
   font-size: 14px;
   color: var(--color-primary);
   text-transform: uppercase;
+  margin: 0 0 var(--space-3);
+}
+
+/* Quantas mensagens a cadência tem. Fica no título porque é a diferença
+   entre os canais que a Carolina precisa enxergar sem contar os cards
+   (WhatsApp 3, e-mail 2). */
+.dossier-abordagem-canal-contador {
+  font-family: var(--font-body);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--text-muted);
+}
+
+.dossier-sequencia {
+  list-style: none;
+  margin: 0 0 var(--space-4);
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+/* A borda esquerda é o fio da cadência: verde no que já foi, laranja no
+   toque da vez, cinza no que ainda não liberou. É o mesmo verde/laranja/
+   cinza dos outros estados do dossiê (indicador-on, potencial-medio). */
+.dossier-sequencia-item {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border);
+  border-radius: 10px;
+  padding: var(--space-3) var(--space-4);
+}
+
+.dossier-sequencia-item.situacao-enviada {
+  border-left-color: var(--color-success);
+}
+
+.dossier-sequencia-item.situacao-proxima {
+  border-left-color: var(--color-orange-dark);
+}
+
+/* Bloqueada fica levemente apagada — dá pra ler (a Carolina quer ver a
+   cadência inteira antes de começar), mas não disputa atenção com o toque
+   da vez. */
+.dossier-sequencia-item.situacao-bloqueada {
+  opacity: 0.75;
+}
+
+.dossier-sequencia-cabecalho {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+
+.dossier-sequencia-rotulo {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.dossier-sequencia-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 700;
+  border-radius: 999px;
+  padding: 4px 11px;
+}
+
+.dossier-sequencia-badge.badge-enviada {
+  background: var(--color-success-bg);
+  color: var(--color-success);
+  border: 1px solid rgba(22, 101, 52, 0.3);
+}
+
+.dossier-sequencia-badge.badge-proxima {
+  background: var(--color-orange-bg);
+  color: var(--color-orange-dark);
+  border: 1px solid rgba(194, 65, 12, 0.3);
+}
+
+.dossier-sequencia-badge.badge-bloqueada {
+  background: var(--bg-elevated);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+}
+
+.dossier-sequencia-concluida {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--color-success);
   margin: 0 0 var(--space-3);
 }
 
@@ -817,7 +934,7 @@
   font-size: 14px;
   line-height: 1.6;
   color: var(--text-primary);
-  margin: 0 0 var(--space-4);
+  margin: 0 0 var(--space-3);
   white-space: pre-wrap;
 }
 

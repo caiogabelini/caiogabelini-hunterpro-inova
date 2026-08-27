@@ -3,12 +3,14 @@ import {
   ArrowLeft,
   Building2,
   CheckCircle2,
+  Clock,
   ExternalLink,
   FileText,
   Gauge,
   Globe,
   Lightbulb,
   Loader2,
+  Lock,
   Mail,
   MessageCircle,
   MessageSquare,
@@ -28,11 +30,15 @@ import {
   gerarAbordagemCanal,
   gerarInsights,
   LimiteIaError,
+  marcarMensagemEnviada,
+  SequenciaOrdemError,
   UnauthorizedError,
   type CanalAbordagem,
   type InsightsIA,
   type Lead,
   type LeadMessage,
+  type MensagensDoLead,
+  type SequenciaAbordagem,
 } from "../api";
 import { PriorityBadge } from "../components/PriorityBadge";
 import { useAuth } from "../context/AuthContext";
@@ -48,7 +54,17 @@ import { SIGNAL_LAYER_LABELS } from "../scoreLayers";
 import { labelServicoFechamento } from "../servicosFechamento";
 import "./LeadDossierPage.css";
 import { formatarDocumento, rotuloDocumento, rotuloEntidade, rotuloNome } from "../documento";
-import { carregarMensagens } from "../mensagens";
+import {
+  carregarMensagens,
+  CANAIS_EM_ORDEM,
+  mensagensEmOrdem,
+  rotuloBotaoGerar,
+  rotuloMensagem,
+  SEM_SEQUENCIAS,
+  sequenciaConcluida,
+  situacaoMensagem,
+  type SituacaoMensagem,
+} from "../mensagens";
 import { getDadosNicho, type DadosNichoSicor } from "../api";
 import { getContatos, temAlgumCanal } from "../contatos";
 import { getLocalizacao } from "../localizacao";
@@ -69,7 +85,7 @@ export function LeadDossierPage() {
   const navigate = useNavigate();
 
   const [lead, setLead] = useState<Lead | null>(null);
-  const [mensagens, setMensagens] = useState<LeadMessage[]>([]);
+  const [mensagens, setMensagens] = useState<MensagensDoLead>(SEM_SEQUENCIAS);
   const [carregando, setCarregando] = useState(true);
   const [erro, setErro] = useState<string | null>(null);
   const [abaAtiva, setAbaAtiva] = useState<Aba>("dados");
@@ -107,7 +123,7 @@ export function LeadDossierPage() {
         if (!cancelado) setCarregando(false);
       });
 
-    // Nunca rejeita — no pior caso devolve [].
+    // Nunca rejeita — no pior caso devolve os dois canais vazios.
     carregarMensagens(() => fetchMensagens(token, id)).then((m) => {
       if (!cancelado) setMensagens(m);
     });
@@ -117,16 +133,27 @@ export function LeadDossierPage() {
     };
   }, [token, id, logout]);
 
-  function registrarNovaMensagem(mensagem: LeadMessage) {
-    setMensagens((atuais) => [mensagem, ...atuais.filter((m) => m.canal !== mensagem.canal)]);
+  /** Uma sequência que acabou de ser GERADA — substitui a do canal e
+   * consome uma geração.
+   *
+   * ⚠️ Substitui, não mescla: "gerar novamente" cria um grupo novo e o
+   * anterior sai da tela (continua no banco). Mesclar deixaria mensagens de
+   * duas cadências convivendo, e a "próxima a enviar" passaria a ser
+   * ambígua. */
+  function registrarSequenciaGerada(sequencia: SequenciaAbordagem) {
+    setMensagens((atuais) => ({ ...atuais, [sequencia.canal]: sequencia }));
     // Incrementa a contagem local do canal pra que o botão desabilite
     // sozinho ao bater o limite, sem exigir um refetch do lead.
     //
-    // `POST /gerar-abordagem/{canal}` devolve o LeadMessage criado, não o
+    // `POST /gerar-abordagem/{canal}` devolve a sequência criada, não o
     // Lead -- diferente de `POST /gerar-insights`, que devolve o Lead
     // inteiro já com `geracoes_ia` atualizado (por isso lá basta
     // `setLead`). O incremento aqui espelha o que o backend acabou de
     // contar; na próxima carga do dossiê o valor vem do servidor de novo.
+    //
+    // ⚠️ Soma 1 por SEQUÊNCIA, não por mensagem: o backend conta grupos
+    // distintos (`COUNT(DISTINCT grupo_id)`), então uma geração de WhatsApp
+    // com 3 mensagens gasta uma cota só.
     setLead((atual) => {
       if (!atual) return atual;
       const anteriores =
@@ -136,9 +163,16 @@ export function LeadDossierPage() {
       if (!anteriores) return atual;
       return {
         ...atual,
-        geracoes_ia: { ...anteriores, [mensagem.canal]: (anteriores[mensagem.canal] ?? 0) + 1 },
+        geracoes_ia: { ...anteriores, [sequencia.canal]: (anteriores[sequencia.canal] ?? 0) + 1 },
       };
     });
+  }
+
+  /** Uma sequência que voltou de `PATCH .../enviada` — mesmo grupo, status
+   * novo. Não mexe em `geracoes_ia`: marcar como enviada não é geração e
+   * não custa nada. */
+  function registrarSequenciaAtualizada(sequencia: SequenciaAbordagem) {
+    setMensagens((atuais) => ({ ...atuais, [sequencia.canal]: sequencia }));
   }
 
   return (
@@ -171,8 +205,9 @@ export function LeadDossierPage() {
               email={lead.email}
               temWhatsapp={!!lead.whatsapp_ativo}
               telefone={lead.telefone}
-              mensagens={mensagens}
-              onGerada={registrarNovaMensagem}
+              sequencias={mensagens}
+              onGerada={registrarSequenciaGerada}
+              onAtualizada={registrarSequenciaAtualizada}
               geracoesIa={lead.geracoes_ia}
             />
           )}
@@ -619,35 +654,51 @@ function AbaAnalise({ scoreDetalhes }: { scoreDetalhes: unknown }) {
   );
 }
 
-// --- Aba "Mensagens" (abordagem sugerida) -----------------------------
+// --- Aba "Mensagens" (sequência de abordagem) -------------------------
+//
+// ⚠️ **Uma geração produz uma SEQUÊNCIA, não uma mensagem** (Fase 11a):
+// 3 toques no WhatsApp, 2 no e-mail. A tela mostra a cadência inteira em
+// ordem, com o status de cada toque, e libera "marcar como enviada" só na
+// mensagem que o backend aponta em `proxima_ordem`.
+//
+// ⚠️ **Nada aqui envia nada.** Não há disparo automático nem agendamento: a
+// Carolina manda pelo WhatsApp/e-mail dela e volta pra registrar. O botão
+// diz "Marcar como enviada" — não "Enviar" — exatamente pra não prometer um
+// comportamento que o produto não tem.
 
-function SecaoAbordagem({
+export function SecaoAbordagem({
   leadId,
   email,
   temWhatsapp,
   telefone,
-  mensagens,
+  sequencias,
   onGerada,
+  onAtualizada,
   geracoesIa,
 }: {
   leadId: string;
   email?: string | null;
   temWhatsapp: boolean;
   telefone?: string | null;
-  mensagens: LeadMessage[];
-  onGerada: (mensagem: LeadMessage) => void;
+  sequencias: MensagensDoLead;
+  onGerada: (sequencia: SequenciaAbordagem) => void;
+  onAtualizada: (sequencia: SequenciaAbordagem) => void;
   geracoesIa: unknown;
 }) {
-  const mostrarEmail = !!email;
   // WhatsApp aqui exige o sinal *confirmado ativo* (whatsapp_ativo),
   // não só ter um telefone cadastrado -- gerar mensagem pra um número
   // que nem confirmamos ter WhatsApp não faz sentido.
-  const mostrarWhatsapp = temWhatsapp;
+  const disponivel: Record<CanalAbordagem, boolean> = {
+    whatsapp: temWhatsapp,
+    email: !!email,
+  };
+  // A ordem vem de CANAIS_EM_ORDEM (WhatsApp primeiro) — ver mensagens.ts.
+  const canais = CANAIS_EM_ORDEM.filter((canal) => disponivel[canal]);
 
-  if (!mostrarEmail && !mostrarWhatsapp) {
+  if (canais.length === 0) {
     return (
       <section className="dossier-card">
-        <SectionHeading icon={Sparkles}>Abordagem sugerida</SectionHeading>
+        <SectionHeading icon={Sparkles}>Sequência de abordagem</SectionHeading>
         <p className="dossier-muted">Nenhum canal disponível ainda (sem e-mail nem WhatsApp confirmado pra este lead).</p>
       </section>
     );
@@ -655,50 +706,50 @@ function SecaoAbordagem({
 
   return (
     <section className="dossier-card">
-      <SectionHeading icon={Sparkles}>Abordagem sugerida</SectionHeading>
+      <SectionHeading icon={Sparkles}>Sequência de abordagem</SectionHeading>
+      <p className="dossier-abordagem-explicacao">
+        A IA escreve a cadência inteira de uma vez. Você envia cada mensagem pelo seu WhatsApp ou e-mail e marca aqui —
+        a próxima só libera depois que a anterior for marcada.
+      </p>
       <div className="dossier-abordagem-canais">
-        {mostrarEmail && (
-          <CanalAbordagemCard
+        {canais.map((canal) => (
+          <CanalSequenciaCard
+            key={canal}
             leadId={leadId}
-            canal="email"
-            titulo="E-mail"
-            mensagem={mensagens.find((m) => m.canal === "email") ?? null}
+            canal={canal}
+            sequencia={sequencias[canal]}
             onGerada={onGerada}
+            onAtualizada={onAtualizada}
             email={email}
-            geracoesIa={geracoesIa}
-          />
-        )}
-        {mostrarWhatsapp && (
-          <CanalAbordagemCard
-            leadId={leadId}
-            canal="whatsapp"
-            titulo="WhatsApp"
-            mensagem={mensagens.find((m) => m.canal === "whatsapp") ?? null}
-            onGerada={onGerada}
             telefone={telefone}
             geracoesIa={geracoesIa}
           />
-        )}
+        ))}
       </div>
     </section>
   );
 }
 
-function CanalAbordagemCard({
+const TITULO_CANAL: Record<CanalAbordagem, string> = {
+  whatsapp: "WhatsApp",
+  email: "E-mail",
+};
+
+function CanalSequenciaCard({
   leadId,
   canal,
-  titulo,
-  mensagem,
+  sequencia,
   onGerada,
+  onAtualizada,
   email,
   telefone,
   geracoesIa,
 }: {
   leadId: string;
   canal: CanalAbordagem;
-  titulo: string;
-  mensagem: LeadMessage | null;
-  onGerada: (mensagem: LeadMessage) => void;
+  sequencia: SequenciaAbordagem | null;
+  onGerada: (sequencia: SequenciaAbordagem) => void;
+  onAtualizada: (sequencia: SequenciaAbordagem) => void;
   email?: string | null;
   telefone?: string | null;
   geracoesIa: unknown;
@@ -712,8 +763,7 @@ function CanalAbordagemCard({
     setGerando(true);
     setErro(null);
     try {
-      const nova = await gerarAbordagemCanal(token, leadId, canal);
-      onGerada(nova);
+      onGerada(await gerarAbordagemCanal(token, leadId, canal));
     } catch (e) {
       if (e instanceof UnauthorizedError) {
         logout();
@@ -722,7 +772,7 @@ function CanalAbordagemCard({
       setErro(
         e instanceof LimiteIaError
           ? e.message
-          : "Não foi possível gerar a mensagem agora. Tente novamente.",
+          : "Não foi possível gerar a sequência agora. Tente novamente.",
       );
     } finally {
       setGerando(false);
@@ -730,71 +780,202 @@ function CanalAbordagemCard({
   }
 
   const limite = statusLimiteIa(geracoesIa, canal);
-
   const numeroWhatsapp = formatarNumeroWhatsapp(telefone);
+
+  const botaoGerar = limite.atingido ? (
+    <p className="dossier-limite-ia">{MENSAGEM_LIMITE_ATINGIDO}</p>
+  ) : (
+    <button
+      type="button"
+      className={sequencia ? "dossier-abordagem-btn-secundario" : "dossier-abordagem-btn"}
+      onClick={gerar}
+      disabled={gerando}
+      aria-busy={gerando}
+    >
+      {gerando ? <Loader2 size={14} className="spin" aria-label="Gerando..." /> : rotuloBotaoGerar(canal, !!sequencia)}
+    </button>
+  );
 
   return (
     <div className="dossier-abordagem-canal">
-      <h3 className="dossier-abordagem-canal-titulo">{titulo}</h3>
+      <h3 className="dossier-abordagem-canal-titulo">
+        {canal === "whatsapp" ? <MessageCircle size={14} /> : <Mail size={14} />}
+        <span>{TITULO_CANAL[canal]}</span>
+        {sequencia && (
+          <span className="dossier-abordagem-canal-contador">
+            {sequencia.total} {sequencia.total === 1 ? "mensagem" : "mensagens"}
+          </span>
+        )}
+      </h3>
 
-      {mensagem ? (
+      {sequencia ? (
         <>
-          {canal === "email" && mensagem.assunto && (
-            <p className="dossier-abordagem-assunto">
-              <strong>Assunto:</strong> {mensagem.assunto}
+          <ol className="dossier-sequencia">
+            {mensagensEmOrdem(sequencia).map((mensagem) => (
+              <MensagemDaSequencia
+                key={mensagem.id}
+                leadId={leadId}
+                mensagem={mensagem}
+                total={sequencia.total}
+                proximaOrdem={sequencia.proxima_ordem}
+                onAtualizada={onAtualizada}
+                email={email}
+                numeroWhatsapp={numeroWhatsapp}
+              />
+            ))}
+          </ol>
+          {sequenciaConcluida(sequencia) && (
+            <p className="dossier-sequencia-concluida">
+              <CheckCircle2 size={14} />
+              <span>Cadência concluída — todas as mensagens foram enviadas.</span>
             </p>
           )}
-          <p className="dossier-abordagem-texto">{mensagem.conteudo}</p>
-          <div className="dossier-abordagem-acoes">
-            {canal === "email" && email && (
-              <a
-                className="dossier-abordagem-btn-acao"
-                href={`mailto:${email}?subject=${encodeURIComponent(mensagem.assunto ?? "")}&body=${encodeURIComponent(mensagem.conteudo)}`}
-              >
-                <Mail size={14} />
-                <span>Abrir no e-mail</span>
-              </a>
-            )}
-            {canal === "whatsapp" && numeroWhatsapp && (
-              <a
-                className="dossier-abordagem-btn-acao"
-                href={`https://wa.me/${numeroWhatsapp}?text=${encodeURIComponent(mensagem.conteudo)}`}
-                target="_blank"
-                rel="noreferrer"
-              >
-                <Send size={14} />
-                <span>Enviar mensagem gerada</span>
-              </a>
-            )}
-            {limite.atingido ? (
-              <p className="dossier-limite-ia">{MENSAGEM_LIMITE_ATINGIDO}</p>
-            ) : (
-              <button
-                type="button"
-                className="dossier-abordagem-btn-secundario"
-                onClick={gerar}
-                disabled={gerando}
-                aria-busy={gerando}
-              >
-                {gerando ? <Loader2 size={14} className="spin" aria-label="Gerando..." /> : "Gerar novamente"}
-              </button>
-            )}
-          </div>
+          <div className="dossier-abordagem-acoes">{botaoGerar}</div>
         </>
       ) : (
         <>
-          <p className="dossier-muted">Mensagem ainda não gerada.</p>
-          {limite.atingido ? (
-            <p className="dossier-limite-ia">{MENSAGEM_LIMITE_ATINGIDO}</p>
-          ) : (
-            <button type="button" className="dossier-abordagem-btn" onClick={gerar} disabled={gerando} aria-busy={gerando}>
-              {gerando ? <Loader2 size={15} className="spin" aria-label="Gerando..." /> : "Gerar mensagem com IA"}
-            </button>
-          )}
+          <p className="dossier-muted">Sequência ainda não gerada.</p>
+          {botaoGerar}
         </>
       )}
       {erro && <p className="dossier-abordagem-erro">{erro}</p>}
     </div>
+  );
+}
+
+/** Badge de status. O texto de `enviada` carrega a data porque "quando
+ * mandei?" é a pergunta que a Carolina faz olhando a cadência — sem ela o
+ * badge diria só o que o botão ausente já dizia. */
+function StatusMensagemBadge({ situacao, enviadaEm }: { situacao: SituacaoMensagem; enviadaEm?: string | null }) {
+  if (situacao === "enviada") {
+    return (
+      <span className="dossier-sequencia-badge badge-enviada">
+        <CheckCircle2 size={13} />
+        <span>{enviadaEm ? `Enviada em ${formatDate(enviadaEm)}` : "Enviada"}</span>
+      </span>
+    );
+  }
+  if (situacao === "proxima") {
+    return (
+      <span className="dossier-sequencia-badge badge-proxima">
+        <Clock size={13} />
+        <span>Próxima a enviar</span>
+      </span>
+    );
+  }
+  return (
+    <span className="dossier-sequencia-badge badge-bloqueada">
+      <Lock size={13} />
+      <span>Aguardando a anterior</span>
+    </span>
+  );
+}
+
+function MensagemDaSequencia({
+  leadId,
+  mensagem,
+  total,
+  proximaOrdem,
+  onAtualizada,
+  email,
+  numeroWhatsapp,
+}: {
+  leadId: string;
+  mensagem: LeadMessage;
+  total: number;
+  proximaOrdem: number | null;
+  onAtualizada: (sequencia: SequenciaAbordagem) => void;
+  email?: string | null;
+  numeroWhatsapp: string | null;
+}) {
+  const { token, logout } = useAuth();
+  const [marcando, setMarcando] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+
+  const situacao = situacaoMensagem(mensagem, proximaOrdem);
+  const ehProxima = situacao === "proxima";
+
+  async function marcar() {
+    if (!token) return;
+    setMarcando(true);
+    setErro(null);
+    try {
+      onAtualizada(await marcarMensagemEnviada(token, leadId, mensagem.id));
+    } catch (e) {
+      if (e instanceof UnauthorizedError) {
+        logout();
+        return;
+      }
+      // ⚠️ O 422 do backend já explica o que houve ("a próxima mensagem
+      // pendente é a 1 de 3"). Mostrar esse texto, e não um genérico, é o
+      // que faz a regra de ordem ter uma redação só — a dele.
+      setErro(
+        e instanceof SequenciaOrdemError
+          ? e.message
+          : "Não foi possível marcar como enviada agora. Tente novamente.",
+      );
+    } finally {
+      setMarcando(false);
+    }
+  }
+
+  return (
+    <li className={`dossier-sequencia-item situacao-${situacao}`}>
+      <div className="dossier-sequencia-cabecalho">
+        <span className="dossier-sequencia-rotulo">{rotuloMensagem(mensagem.ordem, total)}</span>
+        <StatusMensagemBadge situacao={situacao} enviadaEm={mensagem.enviada_em} />
+      </div>
+
+      {mensagem.canal === "email" && mensagem.assunto && (
+        <p className="dossier-abordagem-assunto">
+          <strong>Assunto:</strong> {mensagem.assunto}
+        </p>
+      )}
+      <p className="dossier-abordagem-texto">{mensagem.conteudo}</p>
+
+      {situacao !== "enviada" && (
+        <div className="dossier-abordagem-acoes">
+          {/* O link de envio aparece só na próxima: abrir o WhatsApp com o
+              follow-up antes do primeiro contato é exatamente o pulo de etapa
+              que o backend recusa. */}
+          {ehProxima && mensagem.canal === "email" && email && (
+            <a
+              className="dossier-abordagem-btn-acao"
+              href={`mailto:${email}?subject=${encodeURIComponent(mensagem.assunto ?? "")}&body=${encodeURIComponent(mensagem.conteudo)}`}
+            >
+              <Mail size={14} />
+              <span>Abrir no e-mail</span>
+            </a>
+          )}
+          {ehProxima && mensagem.canal === "whatsapp" && numeroWhatsapp && (
+            <a
+              className="dossier-abordagem-btn-acao"
+              href={`https://wa.me/${numeroWhatsapp}?text=${encodeURIComponent(mensagem.conteudo)}`}
+              target="_blank"
+              rel="noreferrer"
+            >
+              <Send size={14} />
+              <span>Abrir no WhatsApp</span>
+            </a>
+          )}
+          {/* Desabilitado (não oculto) quando bloqueada: a Carolina vê que a
+              ação existe e que só falta marcar a anterior. Mesmo tratamento
+              nos dois canais. */}
+          <button
+            type="button"
+            className="dossier-abordagem-btn-secundario"
+            onClick={marcar}
+            disabled={!ehProxima || marcando}
+            aria-busy={marcando}
+            title={ehProxima ? undefined : "Marque a mensagem anterior como enviada primeiro"}
+          >
+            {marcando ? <Loader2 size={14} className="spin" aria-label="Marcando..." /> : "Marcar como enviada"}
+          </button>
+        </div>
+      )}
+
+      {erro && <p className="dossier-abordagem-erro">{erro}</p>}
+    </li>
   );
 }
 

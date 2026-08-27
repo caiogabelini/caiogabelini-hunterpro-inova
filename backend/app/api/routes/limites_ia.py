@@ -11,8 +11,19 @@ frontend e backend discordarem sobre quantas gerações sobraram.
 
 ## Duas formas de contar, porque os dados são guardados diferente
 
-- **e-mail/WhatsApp**: cada geração é uma linha em ``lead_messages``
-  (histórico, nunca sobrescrito). Contagem = ``COUNT(*)`` por lead + canal.
+- **e-mail/WhatsApp**: cada geração é uma SEQUÊNCIA de linhas em
+  ``lead_messages`` que compartilham um ``grupo_id`` (histórico, nunca
+  sobrescrito). Contagem = ``COUNT(DISTINCT grupo_id)`` por lead + canal.
+
+  ⚠️ **Era ``COUNT(*)`` até a Fase 11a e teve que deixar de ser.** Uma
+  geração de WhatsApp passou a gravar 3 linhas; contando linhas, a primeira
+  geração já estouraria o limite de 2 e o vendedor perderia metade da cota
+  no primeiro clique. A regra do limite não mudou — 2 gerações por canal —,
+  mudou o que uma geração produz, e a contagem seguiu.
+
+  Isso vale inclusive para o histórico anterior à Fase 11a: a migration deu
+  a cada linha legada o próprio ``grupo_id``, então ``COUNT(DISTINCT ...)``
+  devolve para elas exatamente o mesmo número que o ``COUNT(*)`` devolvia.
 - **insights**: ``Lead.insights_ia`` é **sobrescrito**, não há histórico. Daí
   o contador ``Lead.insights_geracoes_count``.
 
@@ -71,7 +82,7 @@ def contar_geracoes(db: Session, lead: Lead, tipo: str) -> int:
         return lead.insights_geracoes_count or 0
 
     consulta = (
-        select(func.count())
+        select(func.count(func.distinct(LeadMessage.grupo_id)))
         .select_from(LeadMessage)
         .where(LeadMessage.lead_id == lead.id, LeadMessage.canal == tipo)
     )

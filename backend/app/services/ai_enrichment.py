@@ -18,12 +18,21 @@ Modelo: ``settings.ANTHROPIC_MODEL`` (``claude-haiku-4-5-20251001``).
 ⚠️ **O sufixo de data é parte do ID** — já foi removido por engano uma vez
 nesta base e teve de ser revertido.
 
+## ⚠️ Uma chamada por sequência, não uma por mensagem
+
+Desde a Fase 11a, ``gerar_sequencia_abordagem`` pede as 3 mensagens de
+WhatsApp (ou as 2 de e-mail) **numa única chamada**. Não é só economia: numa
+chamada só, o modelo escreve o follow-up já tendo escrito a abertura, então
+"não repita o ângulo da mensagem 1" é uma instrução que ele consegue cumprir.
+Três chamadas independentes triplicariam o custo para produzir três aberturas
+parecidas, porque nenhuma delas veria as outras.
+
 ## Defensividade
 
 Estas funções rodam **dentro de um handler HTTP**, então nunca levantam por
-erro de rede/HTTP nem por resposta malformada: devolvem conteúdo vazio
-(``MensagemGerada(conteudo="")`` / ``{}``). Quem decide o que fazer com isso é
-a rota, que devolve 502 em vez de persistir texto vazio.
+erro de rede/HTTP nem por resposta malformada: devolvem vazio (``[]`` na
+sequência, ``{}`` nos insights). Quem decide o que fazer com isso é a rota,
+que devolve 502 em vez de persistir texto vazio.
 
 Isso difere de ``ai_site.py``, que é chamado de dentro do pipeline em lote e
 tem sua própria política de erro. Os dois módulos coexistem de propósito: um
@@ -43,14 +52,24 @@ import httpx
 from app.core.config import settings
 from app.core.segredos import erro_redigido
 
+#: Fonte única. Antes da Fase 11a este módulo redeclarava ``CANAIS_VALIDOS``
+#: com os mesmos dois valores do model — duas listas que ninguém garantia
+#: iguais. O tamanho da sequência entrou pelo mesmo caminho: é o número que o
+#: prompt pede e o que a rota exige de volta, e um número desses não pode
+#: existir em dois lugares.
+from app.models.lead_message import CANAIS_VALIDOS, TAMANHO_SEQUENCIA
+
 logger = logging.getLogger(__name__)
 
 ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages"
 ANTHROPIC_VERSION = "2023-06-01"
 TIMEOUT_PADRAO = 30.0
 MAX_TOKENS_RESPOSTA = 1024
-
-CANAIS_VALIDOS = ("email", "whatsapp")
+#: A sequência inteira num JSON só é bem maior que a mensagem avulsa que este
+#: módulo gerava até a Fase 10. Com 1024 o e-mail (2 corpos de 3-4 frases +
+#: assuntos) encosta no teto, e resposta truncada não parseia — vira 502 e uma
+#: chamada paga jogada fora. O teto não é cobrado, só o que for gerado.
+MAX_TOKENS_SEQUENCIA = 3000
 
 
 def _cliente(cliente: httpx.Client | None) -> tuple[httpx.Client, bool]:
@@ -86,7 +105,9 @@ def extrair_json(texto: str) -> dict | None:
     return None
 
 
-def _chamar_ia(prompt: str, cliente: httpx.Client | None) -> str:
+def _chamar_ia(
+    prompt: str, cliente: httpx.Client | None, max_tokens: int = MAX_TOKENS_RESPOSTA
+) -> str:
     """Uma chamada à Messages API. Devolve o texto, ou ``""`` em qualquer
     falha (rede, HTTP, corpo inesperado). Nunca levanta."""
     http, meu = _cliente(cliente)
@@ -100,7 +121,7 @@ def _chamar_ia(prompt: str, cliente: httpx.Client | None) -> str:
             },
             json={
                 "model": settings.ANTHROPIC_MODEL,
-                "max_tokens": MAX_TOKENS_RESPOSTA,
+                "max_tokens": max_tokens,
                 "messages": [{"role": "user", "content": prompt}],
             },
         )
@@ -266,13 +287,32 @@ reconhecimento de uma operação consolidada.
 Sem nome do produtor, use um tratamento neutro; nunca chute um nome, uma \
 cultura ou um número."""
 
-PROMPT_ABORDAGEM_EMAIL = """Você é um redator de prospecção B2B para um escritório de contabilidade \
+PROMPT_SEQUENCIA_EMAIL = """Você é um redator de prospecção B2B para um escritório de contabilidade \
 (Inova Contabilidade) especializado em produtores rurais e agronegócio no Paraná.
 
-Escreva um E-MAIL de PRIMEIRO CONTATO — tom profissional, cordial e \
-consultivo, corpo com 3 a 4 frases. A mensagem deve soar genuinamente \
-personalizada (mencione pelo menos um dado real da lista abaixo) e terminar \
-convidando para uma conversa breve.
+Escreva uma SEQUÊNCIA DE 2 E-MAILS para o MESMO lead, na ordem em que serão \
+enviados. Eles são partes de uma mesma cadência de abordagem, não duas \
+tentativas independentes: escreva o segundo já sabendo exatamente o que o \
+primeiro disse.
+
+E-MAIL 1 — primeiro contato (enviado hoje):
+- Tom profissional, cordial e consultivo. Corpo com 3 a 4 frases.
+- Genuinamente personalizado: mencione pelo menos um dado real da lista \
+abaixo, com naturalidade (não faça inventário dos dados).
+- Termina convidando para uma conversa breve.
+
+E-MAIL 2 — follow-up (pensado para ~3 a 5 dias depois, sem resposta):
+- Mais CURTO que o primeiro: 2 a 3 frases.
+- Reconhece o e-mail anterior explicitamente, sem cobrança e sem culpar o \
+lead ("sei que essa época do ano é corrida" serve; "você não respondeu meu \
+e-mail" não).
+- Traz um ÂNGULO DE VALOR DIFERENTE do primeiro: outro benefício, outro \
+recorte do que a contabilidade resolve. NÃO repita o argumento, a frase de \
+apresentação nem o dado já citado no e-mail 1.
+- Termina com um CTA claro e objetivo, diferente do convite do e-mail 1 \
+(uma pergunta direta ou uma proposta concreta, fácil de responder).
+- O assunto do e-mail 2 é próprio: não repita o assunto do e-mail 1 nem use \
+"Re:".
 
 {regras_de_tom}
 
@@ -280,30 +320,74 @@ Dados do lead:
 {{dados_lead}}
 
 Responda APENAS com um objeto JSON válido, sem texto antes ou depois, sem \
-bloco de código markdown, no formato exato abaixo:
+bloco de código markdown, no formato exato abaixo, com EXATAMENTE 2 itens em \
+"mensagens", na ordem 1 e 2:
 
 {{{{
-  "assunto": "assunto curto e direto do e-mail, sem saudação, até 60 caracteres",
-  "corpo": "o corpo do e-mail em si — sem saudação tipo \\"Prezado(a)\\", sem \
+  "mensagens": [
+    {{{{
+      "ordem": 1,
+      "assunto": "assunto curto e direto, sem saudação, até 60 caracteres",
+      "conteudo": "o corpo do e-mail — sem saudação tipo \\"Prezado(a)\\", sem \
 assinatura, sem aspas ao redor do texto"
+    }}}},
+    {{{{
+      "ordem": 2,
+      "assunto": "assunto próprio do follow-up, até 60 caracteres",
+      "conteudo": "o corpo do follow-up, nas mesmas regras"
+    }}}}
+  ]
 }}}}
 """.format(regras_de_tom=REGRAS_DE_TOM)
 
-PROMPT_ABORDAGEM_WHATSAPP = """Você é um redator de prospecção B2B para um escritório de contabilidade \
+PROMPT_SEQUENCIA_WHATSAPP = """Você é um redator de prospecção B2B para um escritório de contabilidade \
 (Inova Contabilidade) especializado em produtores rurais e agronegócio no Paraná.
 
-Escreva uma mensagem de WHATSAPP de PRIMEIRO CONTATO — tom direto e próximo \
-(mas sempre respeitoso), só 1 a 2 frases curtas. A mensagem deve soar \
-genuinamente personalizada (mencione pelo menos um dado real da lista abaixo) \
-e terminar com uma pergunta simples que convide a responder.
+Escreva uma SEQUÊNCIA DE 3 MENSAGENS DE WHATSAPP para o MESMO lead, na ordem \
+em que serão enviadas. Elas são partes de uma mesma cadência de abordagem, \
+não três tentativas independentes: escreva a 2 já sabendo exatamente o que a \
+1 disse, e a 3 sabendo o que as duas anteriores disseram.
+
+MENSAGEM 1 — primeiro contato (enviada hoje):
+- Se apresenta como sendo do escritório de contabilidade.
+- Menciona com naturalidade UM sinal público da lista abaixo — um só, sem \
+fazer inventário dos dados.
+- 1 a 2 frases curtas. Tom direto e próximo, sempre respeitoso.
+- Termina com uma pergunta aberta, de baixo compromisso. Não peça reunião \
+nem horário nesta primeira mensagem.
+
+MENSAGEM 2 — primeiro follow-up (pensada para ~2 a 3 dias depois, sem resposta):
+- Reconhece a ausência de resposta SEM soar cobrança e sem culpar o lead \
+("sei que essa época é corrida por aí" serve; "vi que você não respondeu" não).
+- Traz um ÂNGULO DE VALOR DIFERENTE do da mensagem 1: outro benefício, outro \
+recorte. NÃO repita a abertura, a frase de apresentação nem o dado já citado.
+- Termina com uma pergunta MAIS FÁCIL de responder que a da mensagem 1 — \
+idealmente algo que se responde com sim ou não.
+
+MENSAGEM 3 — follow-up final (pensada para ~5 a 7 dias depois, ainda sem resposta):
+- Mais CURTA que as duas anteriores.
+- Dá uma saída educada: deixa claro que não vai insistir e que a porta fica \
+aberta quando fizer sentido.
+- REDUZ a pressão em vez de aumentar. Proibido: urgência, escassez, "última \
+chance", desconto por tempo limitado ou qualquer terceira cobrança.
 
 {regras_de_tom}
 
 Dados do lead:
 {{dados_lead}}
 
-Responda APENAS com o texto da mensagem, sem aspas ao redor, sem assunto, \
-sem assinatura, sem nenhum comentário seu antes ou depois.
+Responda APENAS com um objeto JSON válido, sem texto antes ou depois, sem \
+bloco de código markdown, no formato exato abaixo, com EXATAMENTE 3 itens em \
+"mensagens", na ordem 1, 2 e 3. Sem assunto (WhatsApp não tem), sem aspas ao \
+redor do texto, sem assinatura:
+
+{{{{
+  "mensagens": [
+    {{{{"ordem": 1, "conteudo": "texto da primeira mensagem"}}}},
+    {{{{"ordem": 2, "conteudo": "texto do primeiro follow-up"}}}},
+    {{{{"ordem": 3, "conteudo": "texto do follow-up final"}}}}
+  ]
+}}}}
 """.format(regras_de_tom=REGRAS_DE_TOM)
 
 PROMPT_INSIGHTS = """Você é um analista de prospecção B2B para um escritório de contabilidade \
@@ -341,48 +425,98 @@ bloco de código markdown, no formato exato abaixo:
 
 @dataclass(frozen=True, slots=True)
 class MensagemGerada:
-    """``assunto`` só vem preenchido no canal "email"."""
+    """Uma mensagem de uma sequência. ``assunto`` só vem no canal "email"."""
 
     conteudo: str
     assunto: str | None = None
+    #: Posição na sequência (1 = primeiro contato). Atribuída por POSIÇÃO na
+    #: lista que a IA devolveu, não pelo campo "ordem" que ela escreve — o
+    #: JSON já é ordenado, e confiar no rótulo abriria a chance de dois "2" ou
+    #: de um salto. O campo continua sendo pedido no prompt porque ajuda o
+    #: modelo a se situar enquanto escreve, não porque é lido de volta.
+    ordem: int = 1
 
 
-def gerar_mensagem_abordagem(
+def gerar_sequencia_abordagem(
     lead: dict, canal: str, cliente: httpx.Client | None = None
-) -> MensagemGerada:
-    """Mensagem de primeiro contato personalizada.
+) -> list[MensagemGerada]:
+    """A sequência de abordagem inteira do canal, em UMA chamada paga.
 
-    ``email`` é mais formal, 3-4 frases, e devolve assunto (a IA responde em
-    JSON). ``whatsapp`` é curto, 1-2 frases, resposta em texto puro.
+    WhatsApp devolve 3 (inicial + 2 follow-ups), e-mail 2 (inicial + 1
+    follow-up) — ver ``TAMANHO_SEQUENCIA``. Os dois canais respondem em JSON;
+    o WhatsApp deixou de responder texto puro na Fase 11a porque uma resposta
+    com 3 mensagens precisa de fronteira explícita entre elas (quebrar por
+    linha em branco erra na primeira mensagem que tiver um parágrafo).
 
-    Levanta ``ValueError`` para canal desconhecido — isso é erro de
-    programação, não resposta da IA (a rota valida antes). Qualquer outra
-    falha vira ``conteudo=""``, que a rota traduz em 502.
+    Levanta ``ValueError`` para canal desconhecido — erro de programação, não
+    resposta da IA (a rota valida antes). Qualquer outra falha devolve ``[]``,
+    que a rota traduz em 502.
+
+    ⚠️ **Tudo ou nada.** Se vierem menos mensagens que o esperado (truncagem
+    por ``max_tokens``, item sem conteúdo), devolve ``[]`` em vez da sequência
+    parcial. Uma cadência de 3 gravada com 2 quebraria silenciosamente a
+    promessa da tela — e como a cota só é consumida quando algo é persistido,
+    o custo do rigor é uma nova tentativa, não uma geração perdida.
     """
     if canal not in CANAIS_VALIDOS:
         raise ValueError(f"Canal desconhecido: {canal!r}. Use um de {CANAIS_VALIDOS}.")
 
     if not settings.anthropic_configurada:
         logger.error("ia: ANTHROPIC_API_KEY ausente — geração não tentada")
-        return MensagemGerada(conteudo="")
+        return []
 
-    template = PROMPT_ABORDAGEM_EMAIL if canal == "email" else PROMPT_ABORDAGEM_WHATSAPP
-    texto = _chamar_ia(template.format(dados_lead=montar_contexto_abordagem(lead)), cliente)
+    esperado = TAMANHO_SEQUENCIA[canal]
+    template = (
+        PROMPT_SEQUENCIA_EMAIL if canal == "email" else PROMPT_SEQUENCIA_WHATSAPP
+    )
+    texto = _chamar_ia(
+        template.format(dados_lead=montar_contexto_abordagem(lead)),
+        cliente,
+        max_tokens=MAX_TOKENS_SEQUENCIA,
+    )
     if not texto:
-        return MensagemGerada(conteudo="")
-
-    if canal == "whatsapp":
-        return MensagemGerada(conteudo=texto.strip())
+        return []
 
     dados = extrair_json(texto)
     if dados is None:
-        logger.error("ia: resposta de e-mail não parseou como JSON")
-        return MensagemGerada(conteudo="")
+        logger.error("ia: sequência de %s não parseou como JSON", canal)
+        return []
 
-    corpo = str(dados.get("corpo") or "").strip()
-    assunto_bruto = dados.get("assunto")
-    assunto = str(assunto_bruto).strip() or None if assunto_bruto else None
-    return MensagemGerada(conteudo=corpo, assunto=assunto)
+    bruto = dados.get("mensagens")
+    if not isinstance(bruto, list):
+        logger.error("ia: sequência de %s veio sem a lista 'mensagens'", canal)
+        return []
+
+    sequencia: list[MensagemGerada] = []
+    for item in bruto:
+        if not isinstance(item, dict):
+            continue
+        conteudo = str(item.get("conteudo") or "").strip()
+        if not conteudo:
+            continue
+        # Assunto é do e-mail. Se a IA mandar um no WhatsApp, é descartado
+        # aqui e não em quem lê — o canal não tem onde mostrar isso.
+        assunto = None
+        if canal == "email":
+            bruto_assunto = item.get("assunto")
+            assunto = str(bruto_assunto).strip() or None if bruto_assunto else None
+        # ⚠️ A ordem sai da posição entre as ACEITAS, não do índice na lista
+        # crua: com um item descartado no meio, indexar pelo bruto produziria
+        # uma sequência de ordens 1, 2, 4 — um buraco que nada mais adiante
+        # sabe interpretar.
+        sequencia.append(
+            MensagemGerada(
+                conteudo=conteudo, assunto=assunto, ordem=len(sequencia) + 1
+            )
+        )
+
+    if len(sequencia) != esperado:
+        logger.error(
+            "ia: sequência de %s veio com %d mensagens utilizáveis, esperado %d",
+            canal, len(sequencia), esperado,
+        )
+        return []
+    return sequencia
 
 
 def gerar_insights_estrategicos(

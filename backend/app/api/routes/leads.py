@@ -25,6 +25,7 @@ pesos ainda estão sendo calibrados com a cliente.
 
 from __future__ import annotations
 
+import uuid
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -46,10 +47,19 @@ from app.api.routes.limites_ia import (
     resumo_geracoes,
 )
 from app.core.tempo import agora_utc
-from app.models.lead_message import CANAIS_VALIDOS, LeadMessage
+from app.models.lead_message import (
+    CANAIS_VALIDOS,
+    LeadMessage,
+    StatusMensagem,
+    proxima_pendente,
+)
 from app.scoring.compute_lead_score import calcular_score
 from app.schemas.lead import LeadListaResponse, LeadRead, LeadStatusUpdate
-from app.schemas.lead_message import LeadMessageRead
+from app.schemas.lead_message import (
+    LeadMessageRead,
+    MensagensDoLeadRead,
+    SequenciaAbordagemRead,
+)
 from app.services import ai_enrichment
 
 router = APIRouter()
@@ -443,17 +453,83 @@ def _dados_para_ia(lead: Lead) -> dict[str, Any]:
     }
 
 
-@router.get("/{lead_id}/mensagens", response_model=list[LeadMessageRead])
+# --- Sequência de abordagem (Fase 11a) -------------------------------------
+#
+# Uma geração deixou de produzir uma mensagem e passou a produzir uma
+# **sequência**: 3 mensagens no WhatsApp, 2 no e-mail, todas com o mesmo
+# ``grupo_id``. As três funções abaixo são a leitura dessa estrutura; a regra
+# de ordem em si mora em ``proxima_pendente`` (models/lead_message.py), para
+# não existir aqui uma segunda versão dela.
+
+
+def _sequencia_read(mensagens: list[LeadMessage]) -> SequenciaAbordagemRead:
+    """Monta a resposta de UM grupo. Assume grupo não vazio (não existe grupo
+    sem mensagem: a rota grava a sequência inteira ou nada)."""
+    ordenadas = sorted(mensagens, key=lambda m: m.ordem)
+    proxima = proxima_pendente(ordenadas)
+    return SequenciaAbordagemRead(
+        grupo_id=ordenadas[0].grupo_id,
+        canal=ordenadas[0].canal,
+        gerado_em=ordenadas[0].gerado_em,
+        total=len(ordenadas),
+        proxima_ordem=proxima.ordem if proxima is not None else None,
+        mensagens=[LeadMessageRead.model_validate(m) for m in ordenadas],
+    )
+
+
+def _grupos_do_lead(db: Session, lead: Lead) -> list[list[LeadMessage]]:
+    """Todas as mensagens do lead, fatiadas por ``grupo_id``.
+
+    Agrupa em Python, não em SQL: o volume é o limite de gerações vezes o
+    tamanho da sequência (na prática ~12 linhas por lead), e uma consulta com
+    ``GROUP BY`` teria que voltar ao banco para buscar as linhas de cada grupo
+    mesmo assim.
+    """
+    mensagens = db.execute(
+        select(LeadMessage).where(LeadMessage.lead_id == lead.id)
+    ).scalars().all()
+
+    grupos: dict[str, list[LeadMessage]] = {}
+    for mensagem in mensagens:
+        grupos.setdefault(mensagem.grupo_id, []).append(mensagem)
+    return list(grupos.values())
+
+
+def _sequencia_ativa(
+    grupos: list[list[LeadMessage]], canal: str
+) -> list[LeadMessage] | None:
+    """A sequência vigente do canal: a do grupo gerado por último.
+
+    "Gerar novamente" cria um grupo novo e este passa a ser o ativo; o
+    anterior continua no banco, fora desta resposta.
+
+    O desempate por ``grupo_id`` só existe para o resultado ser determinístico
+    se dois grupos dividirem o mesmo ``gerado_em`` (possível em teste, que
+    gera duas vezes seguidas). Sem ele a "ativa" dependeria da ordem em que o
+    banco devolveu as linhas.
+    """
+    do_canal = [g for g in grupos if g[0].canal == canal]
+    if not do_canal:
+        return None
+    return max(
+        do_canal, key=lambda g: (max(m.gerado_em for m in g), g[0].grupo_id)
+    )
+
+
+@router.get("/{lead_id}/mensagens", response_model=MensagensDoLeadRead)
 def listar_mensagens(
     lead_id: str,
     db: Session = Depends(get_db),
     _usuario: User = Depends(get_current_user),
-) -> list[LeadMessage]:
-    """A mensagem **mais recente de cada canal**.
+) -> MensagensDoLeadRead:
+    """A sequência ATIVA de cada canal, ordenada, com o status de cada mensagem.
 
-    O histórico completo continua no banco — esta rota só entrega o que a aba
-    Mensagens mostra. 404 se o lead não existir; lista vazia se ele existe mas
-    nunca teve mensagem gerada (não é erro).
+    404 se o lead não existir. Lead que existe mas nunca teve geração devolve
+    ``{"email": null, "whatsapp": null}`` — ausência não é erro.
+
+    ⚠️ **Formato novo na Fase 11a**: objeto por canal, não mais lista plana de
+    mensagens. Ver o docstring de ``app/schemas/lead_message.py`` para o que
+    isso faz com o frontend atual enquanto a Fase 11b não chega.
     """
     lead = _resolver_lead(db, lead_id)
     if lead is None:
@@ -461,40 +537,44 @@ def listar_mensagens(
             status_code=status.HTTP_404_NOT_FOUND, detail="Lead não encontrado"
         )
 
-    mensagens = db.execute(
-        select(LeadMessage)
-        .where(LeadMessage.lead_id == lead.id)
-        .order_by(LeadMessage.gerado_em.desc())
-    ).scalars().all()
-
-    vistos: set[str] = set()
-    recentes: list[LeadMessage] = []
-    for mensagem in mensagens:
-        if mensagem.canal not in vistos:
-            vistos.add(mensagem.canal)
-            recentes.append(mensagem)
-    return recentes
+    grupos = _grupos_do_lead(db, lead)
+    ativas = {
+        canal: _sequencia_ativa(grupos, canal) for canal in CANAIS_VALIDOS
+    }
+    return MensagensDoLeadRead(
+        **{
+            canal: _sequencia_read(grupo) if grupo else None
+            for canal, grupo in ativas.items()
+        }
+    )
 
 
-@router.post("/{lead_id}/gerar-abordagem/{canal}", response_model=LeadMessageRead)
+@router.post(
+    "/{lead_id}/gerar-abordagem/{canal}", response_model=SequenciaAbordagemRead
+)
 def gerar_abordagem(
     lead_id: str,
     canal: str,
     db: Session = Depends(get_db),
     _usuario: User = Depends(get_current_user),
-) -> LeadMessage:
-    """Gera uma NOVA mensagem de abordagem — **chamada paga**.
+) -> SequenciaAbordagemRead:
+    """Gera uma NOVA sequência de abordagem — **uma chamada paga**.
 
-    Cria uma linha nova em ``lead_messages``; nunca sobrescreve. Requer
-    autenticação, qualquer papel (é o trabalho de quem vende).
+    Cria um grupo novo (3 linhas no WhatsApp, 2 no e-mail); nunca sobrescreve
+    nem completa um grupo existente. "Gerar novamente" é exatamente esta rota
+    de novo: o grupo anterior vira histórico e o novo passa a ser o ativo.
+    Requer autenticação, qualquer papel (é o trabalho de quem vende).
+
+    ⚠️ **O grupo inteiro consome UMA geração da cota**, não uma por mensagem —
+    ver ``contar_geracoes``, que conta ``grupo_id`` distintos.
 
     422 canal inválido · 404 lead inexistente · 429 limite atingido ·
-    502 se a IA não devolveu nada utilizável.
+    502 se a IA não devolveu a sequência completa.
 
-    ⚠️ O 502 existe para **não persistir mensagem vazia**:
-    ``gerar_mensagem_abordagem`` nunca levanta, devolve ``conteudo=""`` tanto
-    em erro de rede quanto em resposta malformada. Sem esta checagem, o
-    vendedor veria um card em branco sem saber que houve falha.
+    ⚠️ O 502 existe para **não persistir sequência vazia ou pela metade**:
+    ``gerar_sequencia_abordagem`` nunca levanta, devolve ``[]`` tanto em erro
+    de rede quanto em resposta malformada ou truncada. Sem esta checagem, o
+    vendedor veria uma cadência em branco sem saber que houve falha.
     """
     if canal not in CANAIS_VALIDOS:
         raise HTTPException(
@@ -510,23 +590,103 @@ def gerar_abordagem(
 
     _barrar_se_limite_atingido(db, lead, canal)
 
-    resultado = ai_enrichment.gerar_mensagem_abordagem(_dados_para_ia(lead), canal=canal)
-    if not resultado.conteudo:
+    sequencia = ai_enrichment.gerar_sequencia_abordagem(_dados_para_ia(lead), canal=canal)
+    if not sequencia:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Não foi possível gerar a mensagem agora. Tente novamente.",
+            detail="Não foi possível gerar a sequência agora. Tente novamente.",
         )
 
-    mensagem = LeadMessage(
-        lead_id=lead.id,
-        canal=canal,
-        conteudo=resultado.conteudo,
-        assunto=resultado.assunto,
-    )
-    db.add(mensagem)
+    grupo_id = str(uuid.uuid4())
+    # Um único instante para todas as linhas: elas nasceram da mesma chamada.
+    # Carimbar cada uma com o seu ``default`` faria a sequência ter 3
+    # "momentos de geração" e a busca pelo grupo mais recente comparar
+    # timestamps de mensagens em vez de gerações.
+    agora = agora_utc()
+    linhas = [
+        LeadMessage(
+            lead_id=lead.id,
+            canal=canal,
+            grupo_id=grupo_id,
+            ordem=mensagem.ordem,
+            status=StatusMensagem.PENDENTE.value,
+            conteudo=mensagem.conteudo,
+            assunto=mensagem.assunto,
+            gerado_em=agora,
+        )
+        for mensagem in sequencia
+    ]
+    db.add_all(linhas)
     db.commit()
-    db.refresh(mensagem)
-    return mensagem
+    for linha in linhas:
+        db.refresh(linha)
+    return _sequencia_read(linhas)
+
+
+@router.patch(
+    "/{lead_id}/mensagens/{mensagem_id}/enviada",
+    response_model=SequenciaAbordagemRead,
+)
+def marcar_mensagem_enviada(
+    lead_id: str,
+    mensagem_id: str,
+    db: Session = Depends(get_db),
+    _usuario: User = Depends(get_current_user),
+) -> SequenciaAbordagemRead:
+    """Marca uma mensagem como enviada. **Não envia nada** — quem envia é o
+    vendedor, no WhatsApp ou no e-mail dele; aqui ele só registra que mandou.
+
+    ⚠️ **Só a próxima pendente da sequência é aceita.** Marcar o follow-up
+    antes do primeiro contato descreveria uma cadência que não aconteceu, e é
+    dela que a tela tira o que oferecer em seguida. Fora de ordem (ou já
+    enviada) é **422 com o motivo**, não 500: é entrada inválida do usuário,
+    não defeito do servidor.
+
+    Devolve a sequência inteira atualizada, para a tela redesenhar a partir do
+    estado do servidor em vez de adivinhar qual botão liberar.
+
+    404 lead ou mensagem inexistente · 422 fora de ordem.
+    """
+    lead = _resolver_lead(db, lead_id)
+    if lead is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Lead não encontrado"
+        )
+
+    mensagem = db.get(LeadMessage, mensagem_id)
+    # A checagem de dono é o que impede usar o id de uma mensagem de outro
+    # lead para mexer nela por uma URL que parece inocente.
+    if mensagem is None or mensagem.lead_id != lead.id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Mensagem não encontrada para este lead",
+        )
+
+    if mensagem.status == StatusMensagem.ENVIADA.value:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Esta mensagem já foi marcada como enviada.",
+        )
+
+    grupo = db.execute(
+        select(LeadMessage).where(LeadMessage.grupo_id == mensagem.grupo_id)
+    ).scalars().all()
+
+    proxima = proxima_pendente(grupo)
+    if proxima is None or proxima.id != mensagem.id:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"Não dá para pular etapa da sequência: a próxima mensagem "
+                f"pendente é a {proxima.ordem} de {len(grupo)}. "
+                f"Marque-a como enviada antes desta."
+            ),
+        )
+
+    mensagem.status = StatusMensagem.ENVIADA.value
+    mensagem.enviada_em = agora_utc()
+    db.commit()
+    return _sequencia_read(grupo)
 
 
 @router.post("/{lead_id}/gerar-insights", response_model=LeadRead)

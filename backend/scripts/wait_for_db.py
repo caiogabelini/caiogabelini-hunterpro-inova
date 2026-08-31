@@ -8,10 +8,26 @@ from __future__ import annotations
 
 import sys
 import time
+from pathlib import Path
 
-from sqlalchemy import create_engine, text
+# ⚠️ **Sem esta linha o container não sobe.**
+#
+# O entrypoint chama `python scripts/wait_for_db.py`, e nessa forma o Python
+# coloca em `sys.path[0]` o diretório do SCRIPT (`/app/scripts`), não o
+# diretório de trabalho (`/app`) — então `from app.core.config import ...`
+# levanta `ModuleNotFoundError: No module named 'app'` na primeira linha do
+# boot, antes de qualquer log útil.
+#
+# Descoberto na Fase 12 (31/08/2026), ao montar os artefatos de deploy: este
+# era o ÚNICO script de `scripts/` sem o ajuste — os outros três
+# (`create_user`, `seed_leads_teste`, `reprocessar_leads`) já o tinham. Passou
+# despercebido porque é também o único que ninguém roda à mão; só o
+# entrypoint o executa, e o entrypoint não existia até agora.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app.core.config import settings
+from sqlalchemy import create_engine, text  # noqa: E402
+
+from app.core.config import settings  # noqa: E402
 
 TENTATIVAS = 30
 ESPERA_INICIAL_S = 0.5

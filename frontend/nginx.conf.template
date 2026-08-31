@@ -1,0 +1,103 @@
+# Configuração do nginx que serve o frontend em produção (EasyPanel).
+#
+# É um TEMPLATE, não um .conf final: a imagem oficial do nginx roda `envsubst`
+# em tudo que estiver em /etc/nginx/templates/*.template no boot e escreve o
+# resultado em /etc/nginx/conf.d/. Isso deixa o nome do serviço do backend
+# configurável por variável de ambiente no painel do EasyPanel, em vez de
+# assado na imagem — se o serviço for renomeado, muda-se a env var e
+# reinicia, sem rebuild.
+#
+# ⚠️ IMPORTANTE ao editar: só ${VAR} (com chaves) é substituído pelo envsubst,
+# e só pra variáveis realmente definidas no ambiente. As variáveis DO NGINX
+# ($uri, $host, $remote_addr...) são escritas SEM chaves de propósito — é isso
+# que as protege da substituição. Não converta nenhuma delas pra ${...}.
+#
+# Defaults de BACKEND_HOST/BACKEND_PORT vêm do ENV do Dockerfile, então a
+# imagem sobe funcionando sem nenhuma configuração extra.
+
+server {
+    listen 80;
+    server_name _;
+
+    root /usr/share/nginx/html;
+    index index.html;
+
+    # O EasyPanel termina o TLS na borda; aqui dentro é HTTP puro.
+    # O frontend e a API são servidos pela MESMA origem, então o navegador
+    # nunca faz requisição cross-origin e o CORS deixa de existir como
+    # problema em produção. O FRONTEND_ORIGIN do backend continua configurado
+    # como defesa em profundidade, não como o que faz a app funcionar.
+
+    gzip on;
+    gzip_types text/plain text/css application/javascript application/json image/svg+xml;
+    gzip_min_length 1024;
+
+    # ⚠️ O `include` de seguranca.conf se repete em TODO location abaixo, e
+    # isso não é descuido: o nginx descarta os `add_header` herdados assim que
+    # o nível atual define qualquer `add_header` próprio. Ver a explicação
+    # longa no topo de seguranca.conf.
+    include /etc/nginx/seguranca.conf;
+
+    # --- API: tudo sob /api/ vai pro serviço do backend ---
+    location /api/ {
+        include /etc/nginx/seguranca.conf;
+
+        proxy_pass http://${BACKEND_HOST}:${BACKEND_PORT};
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # Geração da sequência de mensagens/insights pela IA e o disparo da
+        # busca mensal levam bem mais que os 60s padrão do nginx. Sem isso, a
+        # request morre com 504 no meio de uma chamada que o backend ainda vai
+        # concluir — o pior tipo de falha, porque o trabalho acontece (e é
+        # PAGO) mas o usuário vê erro e clica de novo.
+        proxy_connect_timeout 30s;
+        proxy_send_timeout 300s;
+        proxy_read_timeout 300s;
+    }
+
+    # --- /health ---
+    # Fica fora de /api/ no backend (app/main.py monta o router de health sem
+    # prefixo), então precisa da sua própria regra: sem ela o `try_files`
+    # abaixo devolveria o index.html e o `checkHealth()` do api.ts tentaria
+    # fazer JSON.parse de um HTML.
+    location = /health {
+        include /etc/nginx/seguranca.conf;
+
+        proxy_pass http://${BACKEND_HOST}:${BACKEND_PORT}/health;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        access_log off;
+    }
+
+    # --- Assets com hash no nome: podem ser cacheados pra sempre ---
+    location /assets/ {
+        include /etc/nginx/seguranca.conf;
+
+        expires 1y;
+        # ⚠️ SEM `always`, ao contrário dos cabeçalhos de segurança: com ele, um
+        # asset inexistente (o `try_files ... =404` abaixo) sairia com
+        # "public, immutable" e o navegador cacharia o 404 por um ano.
+        add_header Cache-Control "public, immutable";
+        try_files $uri =404;
+    }
+
+    # --- SPA fallback ---
+    # Obrigatório: as rotas do React Router (/dashboard, /leads/123,
+    # /busca-leads) não existem como arquivo no disco. Sem este try_files,
+    # abrir uma dessas URLs direto ou dar F5 nela devolve 404 do nginx — só a
+    # raiz "/" funcionaria.
+    location / {
+        include /etc/nginx/seguranca.conf;
+
+        try_files $uri $uri/ /index.html;
+
+        # O index.html NÃO pode ser cacheado: ele é quem aponta pros assets
+        # com hash. Cacheado, um deploy novo continuaria servindo o HTML velho,
+        # referenciando bundles que não existem mais.
+        add_header Cache-Control "no-cache";
+    }
+}

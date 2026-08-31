@@ -1,0 +1,36 @@
+# Contexto de build do frontend.
+#
+# ⚠️ **Este arquivo não existia até a Fase 12** — era o achado M-4 da auditoria
+# de 31/08/2026. Sem ele, o `COPY . .` da etapa de build levaria um `.env` de
+# desenvolvimento pra dentro do contexto, e daí pra dentro de uma imagem que
+# vai pro registry.
+#
+# node_modules/ e dist/ locais também não devem entrar: a etapa de build roda
+# `npm ci` e `npm run build` do zero. Copiar os locais só torna o build mais
+# lento e, no caso de node_modules, pode trazer binário compilado pra outra
+# plataforma (o `@rollup/rollup-linux-*` da sua máquina) que quebra o build
+# dentro da imagem.
+node_modules/
+dist/
+
+# ⚠️ Segredos e configuração local — inclusive o `.env.example`, que não tem
+# uso nenhum dentro da imagem. O padrão `.env.*` cobre `.env.local`,
+# `.env.production` e afins.
+#
+# No frontend isso é ainda mais grave que no backend: variável do Vite é
+# assada no BUNDLE em tempo de build. Um `VITE_*` sensível que entre aqui não
+# fica só na imagem — sai servido pro navegador de quem abrir a página.
+.env
+.env.*
+
+# Metadados de repositório e ruído local
+.git/
+.gitignore
+.dockerignore
+*.log
+.DS_Store
+
+# Nada disto roda dentro da imagem: os testes rodam antes do build, no CI ou
+# na máquina de quem deploya.
+coverage/
+.vite/

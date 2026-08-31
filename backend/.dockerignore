@@ -1,6 +1,48 @@
+# Contexto de build do backend.
+#
+# Sem este arquivo, o `COPY . .` do Dockerfile levaria pra dentro da imagem
+# de produção:
+#   - .venv/          — inútil, a imagem instala tudo do requirements.lock
+#   - .env            — as chaves de API e a SECRET_KEY de DESENVOLVIMENTO,
+#                       assadas numa imagem que vai pro registry. Em produção
+#                       as variáveis vêm do painel do EasyPanel, nunca de um
+#                       arquivo copiado.
+#   - dados_locais/   — os arquivos do Sicor e da Receita Federal, de centenas
+#                       de MB a alguns GB. Em produção eles vivem no volume
+#                       persistente montado em /app/data, não na imagem.
+
+# Ambiente virtual e caches do Python
 .venv/
+venv/
 __pycache__/
 *.pyc
-.env
+*.pyo
+*.pyd
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+
+# ⚠️ Segredos — inclusive os `.example`, que não têm uso dentro da imagem.
+# O padrão `.env.*` cobre `.env.local`, `.env.production` e afins.
+.env
+.env.*
+
+# Arquivos em lote das fontes de dado (Sicor, Receita Federal).
+# ⚠️ Nome diferente do Minotto: lá a pasta é `data/`, aqui é `dados_locais/`
+# (ver SICOR_DADOS_DIR/RFB_DADOS_DIR em app/core/config.py).
+dados_locais/
+
+# Metadados de repositório e ruído local
 .git/
+.gitignore
+.dockerignore
+*.log
+.DS_Store
+
+# ⚠️ `tests/` FICA na imagem, de propósito (3 MB, sem acoplamento com `app/`).
+# Excluir economizaria quase nada e tiraria a possibilidade de rodar a suíte
+# dentro do container pra investigar algo que só acontece em produção.
+#
+# `alembic/` e `alembic.ini` também ficam — sem eles não há
+# `alembic upgrade head`, nem manual nem pelo RODAR_MIGRATIONS do entrypoint.

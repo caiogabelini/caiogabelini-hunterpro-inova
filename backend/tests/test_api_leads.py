@@ -182,6 +182,21 @@ class TestListaPaginada:
     def test_teto_de_por_pagina(self, cliente, auth) -> None:
         assert cliente.get("/api/leads/lista?por_pagina=99999", headers=auth).status_code == 422
 
+    def test_teto_de_pagina(self, cliente, auth) -> None:
+        """⚠️ Regressão da auditoria de 31/08/2026.
+
+        `pagina` tinha `ge=1` e nenhum teto. `pagina=99999999999999999999`
+        virava `OFFSET` gigante e estourava o bigint do Postgres
+        (`NumericValueOutOfRange`) — **500** numa rota autenticada, em vez de
+        422. Com `le`, o FastAPI recusa sem tocar no banco.
+        """
+        for absurdo in (99999999999999999999, 9223372036854775807, 100_001):
+            r = cliente.get(f"/api/leads/lista?pagina={absurdo}", headers=auth)
+            assert r.status_code == 422, absurdo
+
+    def test_o_teto_exato_de_pagina_ainda_passa(self, cliente, auth) -> None:
+        assert cliente.get("/api/leads/lista?pagina=100000", headers=auth).status_code == 200
+
     def test_busca_por_nome(self, cliente, auth) -> None:
         r = cliente.get("/api/leads/lista?busca=ALFA", headers=auth).json()
         assert r["total"] == 1 and r["items"][0]["nome"] == "PRODUTOR ALFA"

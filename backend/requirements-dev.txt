@@ -1,2 +1,5 @@
+# Dependências de desenvolvimento/teste. Mesma disciplina de pin do
+# requirements.txt — um pytest que muda de major sozinho quebra a suíte no CI
+# sem ninguém ter mexido em código.
 -r requirements.txt
-pytest
+pytest==9.1.1

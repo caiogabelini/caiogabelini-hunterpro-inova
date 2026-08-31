@@ -254,6 +254,36 @@ class TestRateLimit:
         assert entrar(cliente, senha="errada").status_code == 401
 
 
+class TestEntradaHostil:
+    """⚠️ Regressão da auditoria de 31/08/2026.
+
+    `POST /api/auth/login` é a **única rota pública** do produto. Um null byte
+    no e-mail devolvia **500**: o psycopg2 recusa NUL em literal de string e a
+    exceção subia sem tratamento, antes mesmo do bcrypt.
+    """
+
+    def test_null_byte_no_email_vira_401_e_nao_500(self, cliente) -> None:
+        r = cliente.post("/api/auth/login", json={"email": f"{EMAIL}\x00", "senha": SENHA})
+        assert r.status_code == 401
+        assert r.json()["detail"] == "E-mail ou senha inválidos"
+
+    def test_null_byte_na_senha_tambem(self, cliente) -> None:
+        assert cliente.post("/api/auth/login",
+                            json={"email": EMAIL, "senha": f"{SENHA}\x00"}).status_code == 401
+
+    def test_a_recusa_e_indistinguivel_de_credencial_errada(self, cliente) -> None:
+        """⚠️ 401 e não 422, de propósito.
+
+        E-mail com NUL não existe no banco, então a resposta honesta é a mesma
+        de um e-mail que não existe. Um 422 aqui contaria ao atacante que ele
+        achou um caminho diferente dos outros — informação de graça.
+        """
+        com_nul = cliente.post("/api/auth/login", json={"email": f"{EMAIL}\x00", "senha": SENHA})
+        errado = cliente.post("/api/auth/login", json={"email": "nao@existe.com", "senha": SENHA})
+        assert com_nul.status_code == errado.status_code == 401
+        assert com_nul.json() == errado.json()
+
+
 class TestSeguranca:
     def test_hash_nunca_e_a_senha(self) -> None:
         h = hash_password(SENHA)

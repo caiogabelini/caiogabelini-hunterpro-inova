@@ -39,9 +39,11 @@ trilha de auditoria de quando um admin liberou.
 
 from __future__ import annotations
 
+import hashlib
 from datetime import datetime
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -49,6 +51,19 @@ from app.models.lead import Lead
 from app.models.lead_message import CanalMensagem, LeadMessage
 
 TIPO_INSIGHTS = "insights"
+
+#: Quanto uma requisição espera pelo lock da cota antes de desistir.
+#:
+#: ⚠️ **Existe pra não trocar gasto indevido por indisponibilidade.** O lock é
+#: segurado durante a chamada à IA, que tem timeout de 30 s. Sem teto de
+#: espera, N requisições no mesmo lead ficariam presas até 30 s cada — e como
+#: rota síncrona do FastAPI ocupa uma thread do pool (40 por padrão), 40
+#: cliques no mesmo lead derrubariam a API inteira. Um DoS de
+#: disponibilidade no lugar do DoS de custo não é conserto.
+#:
+#: 5 s cobre o caso real (dois cliques seguidos no mesmo botão) e devolve erro
+#: claro em vez de pendurar quem chegou depois.
+LOCK_COTA_TIMEOUT_SEGUNDOS = 5
 
 #: Os canais saem de ``CanalMensagem`` para não virarem uma segunda lista que
 #: alguém esquece de atualizar ao criar um canal novo.
@@ -74,6 +89,85 @@ def _resetado_em(lead: Lead, tipo: str) -> datetime | None:
         return datetime.fromisoformat(bruto)
     except ValueError:
         return None
+
+
+class GeracaoEmAndamento(RuntimeError):
+    """Outra requisição está gerando para este mesmo lead+tipo agora.
+
+    Exceção própria (e não ``HTTPException``) pra que este módulo continue
+    sendo regra de negócio pura: quem traduz em status HTTP é a rota, como já
+    acontece com ``limite_atingido`` → 429.
+    """
+
+
+def _chave_de_lock(lead_id: int, tipo: str) -> int:
+    """Um bigint estável e determinístico pra ``(lead, tipo)``.
+
+    O advisory lock do Postgres é indexado por número, não por texto. Usa-se
+    BLAKE2b truncado em 63 bits (não 64) porque a chave é ``bigint``
+    **com sinal**: 64 bits estourariam pro negativo, o que funciona mas
+    dificulta a leitura em ``pg_locks`` na hora de investigar um travamento.
+
+    Colisão entre pares diferentes é possível em teoria e inofensiva na
+    prática: o pior efeito é dois leads distintos serializarem entre si por um
+    instante, nunca cota compartilhada errada — quem decide a cota continua
+    sendo o ``COUNT`` de baixo.
+    """
+    digest = hashlib.blake2b(f"ia:{lead_id}:{tipo}".encode(), digest_size=8).digest()
+    return int.from_bytes(digest, "big") >> 1
+
+
+def travar_cota(db: Session, lead: Lead, tipo: str) -> None:
+    """Serializa as gerações de ``(lead, tipo)`` até o fim da transação.
+
+    ⚠️ **Corrige a corrida encontrada na auditoria de 31/08/2026.** A rota de
+    geração fazia::
+
+        checar cota (SELECT COUNT)   ← sem lock
+        chamar a IA                  ← PAGO, segundos de janela
+        gravar + a cota é debitada
+
+    Duas requisições simultâneas liam a mesma contagem antes de qualquer uma
+    gravar, ambas passavam, e **ambas pagavam**. O limite de 2 virava N para
+    aquela rodada — o único caminho conhecido para gasto acima do previsto.
+
+    ## Por que advisory lock e não ``SELECT ... FOR UPDATE`` no lead
+
+    ``FOR UPDATE`` na linha do lead resolveria a corrida, mas bloquearia
+    **qualquer** escrita naquele lead enquanto a IA responde. Na prática:
+    arrastar o card no Kanban (``PATCH /status``) ficaria pendurado por
+    segundos por causa de uma geração de mensagem que não tem nada a ver com
+    o status. O advisory lock é keyed em ``(lead, tipo)``: serializa
+    exatamente o que precisa ser serializado e não toca em linha nenhuma.
+
+    ``pg_advisory_xact_lock`` é liberado automaticamente no COMMIT **ou no
+    ROLLBACK** — inclusive quando a rota devolve 502 porque a IA falhou. Não
+    há caminho que deixe o lock pendurado sem que a transação também tenha
+    ficado, e a sessão é fechada no ``finally`` do ``get_db``.
+
+    ⚠️ **No-op fora do Postgres.** SQLite (a suíte) não tem advisory lock nem
+    concorrência de escrita real. A garantia é verificada onde ela existe:
+    contra Postgres, com requisições paralelas de verdade.
+    """
+    if db.bind is None or db.bind.dialect.name != "postgresql":
+        return
+
+    # `SET LOCAL` vale só até o fim desta transação — não vaza o timeout pra
+    # próxima requisição que pegar a mesma conexão do pool.
+    db.execute(text(f"SET LOCAL lock_timeout = '{LOCK_COTA_TIMEOUT_SEGUNDOS}s'"))
+    try:
+        db.execute(
+            text("SELECT pg_advisory_xact_lock(:chave)"),
+            {"chave": _chave_de_lock(lead.id, tipo)},
+        )
+    except DBAPIError as exc:
+        # Estourou os 5 s: já existe uma geração em curso pra este lead+tipo.
+        # Devolver erro agora é melhor que esperar a IA da outra requisição
+        # terminar pra só então descobrir que a cota acabou.
+        raise GeracaoEmAndamento(
+            "Já existe uma geração em andamento para este lead neste canal. "
+            "Aguarde alguns segundos e tente novamente."
+        ) from exc
 
 
 def contar_geracoes(db: Session, lead: Lead, tipo: str) -> int:

@@ -25,6 +25,7 @@ pesos ainda estão sendo calibrados com a cliente.
 
 from __future__ import annotations
 
+import math
 import uuid
 from typing import Any
 
@@ -43,8 +44,10 @@ from app.models.lead import (
 from app.models.user import User
 from app.api.routes.limites_ia import (
     TIPO_INSIGHTS,
+    GeracaoEmAndamento,
     limite_atingido,
     resumo_geracoes,
+    travar_cota,
 )
 from app.core.tempo import agora_utc
 from app.models.lead_message import (
@@ -68,6 +71,28 @@ router = APIRouter()
 #: trivial de derrubar a API a partir de uma tela autenticada.
 POR_PAGINA_MAXIMO = 200
 POR_PAGINA_PADRAO = 25
+
+#: Teto de ``valor_fechamento`` (R$ 50 milhões).
+#:
+#: ⚠️ Não é uma regra de negócio da Inova — é uma **âncora de sanidade**. O
+#: contrato real de contabilidade rural fica ordens de grandeza abaixo disso;
+#: o número existe pra que um erro de digitação ou um payload hostil não
+#: entre no banco e estoure a soma da receita no dashboard. Um valor legítimo
+#: que bata neste teto é um caso pra conversar, não pra gravar em silêncio.
+VALOR_FECHAMENTO_MAXIMO = 50_000_000.0
+
+#: Teto de ``pagina`` na listagem.
+#:
+#: ⚠️ Existe porque `ge=1` sozinho não bastava: a auditoria de 31/08/2026
+#: mandou `pagina=99999999999999999999` e recebeu **500** —
+#: `OFFSET (pagina-1) * por_pagina` estourava o `bigint` do Postgres
+#: (`NumericValueOutOfRange`) antes de qualquer resultado. Com `le`, o
+#: FastAPI devolve 422 sem tocar no banco.
+#:
+#: 100.000 páginas × 200 por página = 20 milhões de leads. Nenhuma base deste
+#: produto chega perto (o volume contratado é 50/mês), então o teto não corta
+#: uso legítimo nenhum — ele corta o absurdo.
+PAGINA_MAXIMA = 100_000
 
 #: Campos que a lista aceita ordenar. Lista fechada de propósito: interpolar
 #: um nome de coluna vindo da query string é injeção esperando acontecer.
@@ -220,7 +245,7 @@ def listar_leads_paginado(
     kanban_status: str | None = Query(None),
     ordenar_por: str = Query("score_total"),
     ordem: str = Query("desc"),
-    pagina: int = Query(1, ge=1),
+    pagina: int = Query(1, ge=1, le=PAGINA_MAXIMA),
     por_pagina: int = Query(POR_PAGINA_PADRAO, ge=1, le=POR_PAGINA_MAXIMO),
 ) -> LeadListaResponse:
     """Lista paginada com busca e filtro — consumida pela tela Lista de Leads.
@@ -365,12 +390,31 @@ def atualizar_status_lead(
                     f"{list(TIPOS_CONTRATO_VALIDOS)} quando kanban_status é 'ganho'"
                 ),
             )
-        if dados.valor_fechamento is None or dados.valor_fechamento <= 0:
+        # ⚠️ `math.isfinite` ANTES da comparação, e não `> 0` sozinho.
+        #
+        # A auditoria de 31/08/2026 mandou `{"valor_fechamento": "NaN"}` e
+        # recebeu **200**: o Pydantic converte a string pro float NaN, e em
+        # IEEE-754 `NaN <= 0` é False — então o valor atravessava a guarda de
+        # positividade sem ser positivo. O NaN ficava gravado no banco, o SUM
+        # do dashboard virava NaN, e o Pydantic serializava como `null`
+        # (JSON não tem NaN): a receita fechada SUMIA da tela de todo mundo,
+        # por causa de um registro, sem erro em lugar nenhum.
+        #
+        # `1e308` passava pelo mesmo caminho e estourava o SUM pra infinito.
+        # Daí o teto: nenhuma comparação sozinha barra os dois casos, porque
+        # o problema não é o sinal do número, é ele não ser um número usável.
+        if (
+            dados.valor_fechamento is None
+            or not math.isfinite(dados.valor_fechamento)
+            or dados.valor_fechamento <= 0
+            or dados.valor_fechamento > VALOR_FECHAMENTO_MAXIMO
+        ):
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=(
-                    "valor_fechamento é obrigatório e deve ser maior que zero "
-                    "quando kanban_status é 'ganho'"
+                    "valor_fechamento é obrigatório quando kanban_status é "
+                    "'ganho' e deve ser um número entre 0 (exclusivo) e "
+                    f"{VALOR_FECHAMENTO_MAXIMO:.0f}"
                 ),
             )
 
@@ -411,7 +455,21 @@ DETALHE_LIMITE_IA = (
 
 
 def _barrar_se_limite_atingido(db: Session, lead: Lead, tipo: str) -> None:
-    """429 quando o lead já esgotou as gerações deste tipo."""
+    """429 quando o lead já esgotou as gerações deste tipo.
+
+    ⚠️ **Trava ANTES de contar.** A ordem é o ponto: ``travar_cota`` segura o
+    advisory lock de ``(lead, tipo)`` até o fim da transação, então a contagem
+    logo abaixo e a gravação lá na frente acontecem dentro da mesma seção
+    crítica. Contar primeiro e travar depois seria a mesma corrida que a
+    auditoria de 31/08/2026 encontrou, só que mais difícil de enxergar.
+    """
+    try:
+        travar_cota(db, lead, tipo)
+    except GeracaoEmAndamento as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=str(exc)
+        ) from exc
+
     if limite_atingido(db, lead, tipo):
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=DETALHE_LIMITE_IA

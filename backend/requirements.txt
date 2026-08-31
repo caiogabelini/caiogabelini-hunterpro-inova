@@ -1,21 +1,45 @@
-fastapi
-uvicorn[standard]
-sqlalchemy
-alembic
-psycopg2-binary
-pydantic
-pydantic-settings
-python-dotenv
-celery
-redis
-httpx
-dnspython
-python-jose[cryptography]
-passlib[bcrypt]
+# Dependências DIRETAS, com versão exata.
+#
+# ⚠️ **Pinado a partir do conjunto que passou nos 800 testes** (auditoria de
+# segurança, 31/08/2026). Antes deste commit só `bcrypt` tinha pin e todo o
+# resto flutuava para o mais recente no momento do `docker build` — ou seja, a
+# imagem publicada não continha necessariamente o que foi testado, e uma
+# release quebrada (ou comprometida) de qualquer dependência entrava em
+# produção sem revisão.
+#
+# ⚠️ Este arquivo declara o que o projeto USA. O que a imagem INSTALA é o
+# `requirements.lock`, que fixa também as transitivas — pin de direta sozinho
+# não fecha o buraco, porque a maior parte da árvore é transitiva (15 diretas,
+# 60 pacotes instalados).
+#
+# Para atualizar uma dependência:
+#   1. mude a versão aqui
+#   2. pip install -r requirements.txt
+#   3. pip freeze --exclude-editable | sort > requirements.lock
+#   4. rode a suíte inteira ANTES de commitar
+
+fastapi==0.141.1
+uvicorn[standard]==0.52.4
+sqlalchemy==2.0.52
+alembic==1.19.1
+psycopg2-binary==2.9.12
+pydantic==2.13.4
+pydantic-settings==2.15.0
+python-dotenv==1.2.3
+celery==5.6.3
+redis==8.1.0
+httpx==0.28.1
+dnspython==2.8.0
+python-jose[cryptography]==3.5.0
+passlib[bcrypt]==1.7.4
+
 # ⚠️ bcrypt travado em <4.0 de propósito: passlib==1.7.4 (sem manutenção
 # desde 2020) lê `bcrypt.__about__.__version__` pra detectar a versão do
 # backend, atributo removido no bcrypt 4.x. Sem este pin, hash_password()
 # quebra com um ValueError enganoso ("password cannot be longer than 72
 # bytes") mesmo pra senha curta. Confirmado no Minotto em 20/08/2026.
+#
+# ⚠️ Dívida conhecida (auditoria 31/08/2026): é o passlib sem manutenção que
+# obriga a manter crypto de 2022. Trocar passlib por bcrypt puro ou argon2
+# libera este pin. Fora do escopo daquela sessão de correções.
 bcrypt==3.2.2
-

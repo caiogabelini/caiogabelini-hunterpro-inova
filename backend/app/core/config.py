@@ -11,6 +11,16 @@ import math
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+#: O valor de ``SECRET_KEY`` que está versionado no repositório. Serve pra
+#: desenvolvimento e **só** pra desenvolvimento: quem lê o repositório sabe
+#: qual é, e com ela forja um JWT de admin.
+SECRET_KEY_PADRAO = "changeme-in-env"
+
+#: Comprimento mínimo aceito em produção. 32 caracteres é o tamanho de uma
+#: chave de 256 bits em hex/base64 — abaixo disso a assinatura HS256 fica com
+#: menos entropia que o próprio algoritmo assume.
+SECRET_KEY_MIN_CARACTERES = 32
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
@@ -31,7 +41,11 @@ class Settings(BaseSettings):
     # --- Autenticação -----------------------------------------------------
     #: ⚠️ NUNCA usar este valor em produção. É o padrão de desenvolvimento;
     #: produção recebe uma chave forte e diferente via ambiente (§7).
-    SECRET_KEY: str = "changeme-in-env"
+    #:
+    #: Desde a auditoria de 31/08/2026 isso deixou de ser só um aviso:
+    #: ``validar_seguranca_producao`` **impede o processo de subir** com esta
+    #: chave em produção.
+    SECRET_KEY: str = SECRET_KEY_PADRAO
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 12  # 12h
 
     #: Anti-força-bruta no login (contador por e-mail no Redis).
@@ -180,4 +194,65 @@ class Settings(BaseSettings):
         return math.ceil(self.LEADS_POR_BUSCA * max(self.LEADS_MARGEM_PRE_SELECAO, 1.0))
 
 
+def validar_seguranca_producao(config: Settings) -> None:
+    """Recusa configuração insegura em produção. ⚠️ **Falha FECHADA.**
+
+    A auditoria de 31/08/2026 subiu a aplicação com ``ENVIRONMENT=production``
+    e sem definir ``SECRET_KEY``. Ela subiu normalmente, com a chave padrão do
+    repositório — e um JWT ``{"user_id": ..., "role": "admin"}`` assinado com
+    essa chave (que qualquer um lê no GitHub) devolveu **200 em /api/leads**.
+    Bypass total de autenticação por uma variável de ambiente esquecida.
+
+    O aviso no docstring de ``SECRET_KEY`` já existia desde a Fase 8a, e o
+    checklist de deploy (§5) também. Não bastou: **intenção documentada não é
+    guarda.**
+
+    ## Por que levantar, e não logar
+
+    Um aviso na subida some no primeiro redeploy e ninguém lê. A aplicação no
+    ar com chave conhecida é indistinguível de uma saudável até alguém
+    explorar. A única falha segura aqui é não existir: sem processo não há o
+    que atacar, e o deploy quebra na cara de quem está deployando — que é
+    exatamente quem pode consertar.
+
+    ## Por que uma função, e não um validador do Pydantic
+
+    A primeira versão desta guarda era um ``@model_validator``. Funcionava,
+    mas o ``ValidationError`` embrulha a mensagem e **ecoa o dict de entrada**
+    (``input_value={...}``). Medi com segredos falsos no ambiente: hoje o
+    Pydantic trunca esse repr e nada escapa — mas a garantia passaria a
+    depender do comprimento do dict e do formato de erro de uma biblioteca de
+    terceiros. Uma guarda cujo texto vai pro log do orquestrador não pode
+    depender disso. Aqui a mensagem é inteiramente nossa: **nunca contém o
+    valor da chave, nem nenhum outro campo da config.**
+
+    ## Por que na importação do módulo
+
+    O singleton é construído no import, então isto barra **todo** entrypoint de
+    uma vez: ``uvicorn``, o worker Celery, o Alembic e qualquer script de
+    ``scripts/``. Em ``main.py`` protegeria só a API, e o worker continuaria
+    subindo num ambiente que já se sabe mal configurado.
+    """
+    if not config.em_producao:
+        return
+
+    chave = config.SECRET_KEY.strip()
+    comando = "python -c 'import secrets; print(secrets.token_urlsafe(48))'"
+
+    if chave == SECRET_KEY_PADRAO:
+        raise RuntimeError(
+            "SECRET_KEY esta com o valor padrao do repositorio e "
+            "ENVIRONMENT=production. Qualquer pessoa que leia o codigo forja "
+            f"um token de admin. Gere uma chave nova ({comando}) e defina "
+            "SECRET_KEY no ambiente antes de subir."
+        )
+    if len(chave) < SECRET_KEY_MIN_CARACTERES:
+        raise RuntimeError(
+            f"SECRET_KEY tem {len(chave)} caracteres e ENVIRONMENT=production "
+            f"exige no minimo {SECRET_KEY_MIN_CARACTERES}. Gere uma chave nova "
+            f"({comando}) e defina SECRET_KEY no ambiente antes de subir."
+        )
+
+
 settings = Settings()
+validar_seguranca_producao(settings)

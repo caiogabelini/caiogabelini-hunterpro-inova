@@ -502,6 +502,96 @@ class TestLimite:
         assert corpo["geracoes_ia"] == {"email": 1, "whatsapp": 0, "insights": 0, "limite": 2}
 
 
+class TestLockDaCota:
+    """⚠️ A corrida encontrada na auditoria de 31/08/2026.
+
+    A rota fazia ``checar cota (SELECT COUNT)`` → ``chamar a IA`` (pago,
+    segundos) → ``gravar e debitar``. Sem lock, N requisições simultâneas liam
+    a mesma contagem antes de qualquer uma gravar e **todas pagavam**.
+
+    Medido contra Postgres com 12 requisições paralelas e um dublê de 2 s:
+    **sem o lock, 12 gerações onde a cota permitia 2**; com o lock, exatamente
+    2. Estes testes cobrem a fiação (SQLite não tem advisory lock nem escrita
+    concorrente de verdade — a garantia é verificada contra Postgres).
+    """
+
+    def test_a_cota_e_travada_ANTES_de_ser_contada(self, cliente, auth, monkeypatch):
+        """A ordem é o ponto: contar primeiro e travar depois seria a mesma
+        corrida, só mais difícil de enxergar."""
+        from app.api.routes import leads as rotas
+
+        ordem: list[str] = []
+        original_contar = rotas.limite_atingido
+        monkeypatch.setattr(rotas, "travar_cota",
+                            lambda db, lead, tipo: ordem.append("travou"))
+        monkeypatch.setattr(rotas, "limite_atingido",
+                            lambda db, lead, tipo: ordem.append("contou") or original_contar(db, lead, tipo))
+
+        cliente.post(f"/api/leads/{id_do(cliente)}/gerar-abordagem/whatsapp", headers=auth)
+        assert ordem == ["travou", "contou"]
+
+    def test_geracao_concorrente_no_mesmo_lead_vira_409(self, cliente, auth, monkeypatch):
+        """Quando outra requisição já está gerando, quem chega depois recebe
+        409 com explicação — não fica pendurado até o timeout da IA.
+
+        ⚠️ Existe pra não trocar gasto indevido por indisponibilidade: rota
+        síncrona ocupa thread do pool, e espera sem teto transformaria 40
+        cliques no mesmo lead numa API travada."""
+        from app.api.routes import leads as rotas
+        from app.api.routes.limites_ia import GeracaoEmAndamento
+
+        def ocupado(db, lead, tipo):
+            raise GeracaoEmAndamento("Já existe uma geração em andamento para este lead neste canal.")
+
+        monkeypatch.setattr(rotas, "travar_cota", ocupado)
+        r = cliente.post(f"/api/leads/{id_do(cliente)}/gerar-abordagem/whatsapp", headers=auth)
+        assert r.status_code == 409
+        assert "em andamento" in r.json()["detail"]
+
+    def test_o_409_acontece_ANTES_de_chamar_a_ia(self, cliente, auth, ia, monkeypatch):
+        """Não adianta recusar depois de gastar."""
+        from app.api.routes import leads as rotas
+        from app.api.routes.limites_ia import GeracaoEmAndamento
+
+        monkeypatch.setattr(rotas, "travar_cota",
+                            lambda db, lead, tipo: (_ for _ in ()).throw(GeracaoEmAndamento("x")))
+        cliente.post(f"/api/leads/{id_do(cliente)}/gerar-abordagem/whatsapp", headers=auth)
+        assert ia.chamadas == 0
+
+    def test_insights_tambem_e_travado(self, cliente, auth, monkeypatch):
+        from app.api.routes import leads as rotas
+        from app.api.routes.limites_ia import GeracaoEmAndamento
+
+        monkeypatch.setattr(rotas, "travar_cota",
+                            lambda db, lead, tipo: (_ for _ in ()).throw(GeracaoEmAndamento("x")))
+        assert cliente.post(f"/api/leads/{id_do(cliente)}/gerar-insights",
+                            headers=auth).status_code == 409
+
+    def test_a_chave_do_lock_separa_lead_e_tipo(self):
+        """Chaves iguais serializariam gerações que não têm relação; chaves
+        instáveis não serializariam nada entre processos."""
+        from app.api.routes.limites_ia import _chave_de_lock
+
+        assert _chave_de_lock(1, "whatsapp") == _chave_de_lock(1, "whatsapp")  # estável
+        assert _chave_de_lock(1, "whatsapp") != _chave_de_lock(1, "email")     # por tipo
+        assert _chave_de_lock(1, "whatsapp") != _chave_de_lock(2, "whatsapp")  # por lead
+        # bigint COM SINAL: 64 bits estourariam pro negativo e dificultariam
+        # a leitura de pg_locks numa investigação.
+        assert 0 <= _chave_de_lock(999999, "insights") < 2**63
+
+    def test_fora_do_postgres_e_no_op_e_nao_quebra(self, cliente, auth):
+        """A suíte roda em SQLite, que não tem advisory lock. O no-op é o que
+        permite a mesma rota rodar nos dois — e é por isso que a garantia real
+        é verificada contra Postgres, não aqui."""
+        from app.api.routes.limites_ia import travar_cota
+        from app.models import Lead
+
+        lead = cliente.db.query(Lead).one()
+        travar_cota(cliente.db, lead, "whatsapp")  # não levanta
+        assert cliente.post(f"/api/leads/{id_do(cliente)}/gerar-abordagem/whatsapp",
+                            headers=auth).status_code == 200
+
+
 class TestReset:
     def test_reset_libera_novas_geracoes(self, cliente, auth, auth_admin):
         alvo = id_do(cliente)

@@ -84,6 +84,40 @@ class TestValidacao:
         assert r.status_code == 422
         assert "novo_lead" in r.json()["detail"]
 
+    def test_NaN_em_valor_fechamento_e_recusado(self, cliente, auth):
+        """⚠️ Regressão da auditoria de 31/08/2026.
+
+        A guarda era `valor_fechamento <= 0`. Em IEEE-754 `NaN <= 0` é False,
+        então `{"valor_fechamento": "NaN"}` — o Pydantic converte a string pro
+        float NaN — atravessava e era **gravado**. O SUM do dashboard virava
+        NaN, o Pydantic serializava como `null` (JSON não tem NaN), e a
+        receita fechada SUMIA da tela de todo mundo por causa de um registro,
+        sem erro em lugar nenhum.
+        """
+        alvo = _id_do(cliente, CPF_VALIDO)
+        r = cliente.patch(f"/api/leads/{alvo}/status", headers=auth, json={
+            "kanban_status": "ganho", "servicos_vendidos": ["contabilidade"],
+            "tipo_contrato": "recorrente", "valor_fechamento": "NaN"})
+        assert r.status_code == 422
+        assert cliente.db.query(Lead).filter(Lead.documento == CPF_VALIDO).one().valor_fechamento is None
+
+    def test_valor_absurdo_e_recusado_pelo_teto(self, cliente, auth):
+        """`1e308` passava pela mesma guarda e estourava o SUM pra infinito."""
+        alvo = _id_do(cliente, CPF_VALIDO)
+        for valor in (1e308, 50_000_000.01):
+            r = cliente.patch(f"/api/leads/{alvo}/status", headers=auth, json={
+                "kanban_status": "ganho", "servicos_vendidos": ["contabilidade"],
+                "tipo_contrato": "recorrente", "valor_fechamento": valor})
+            assert r.status_code == 422, valor
+
+    def test_o_teto_exato_ainda_passa(self, cliente, auth):
+        """A fronteira, não só o lado de fora dela."""
+        alvo = _id_do(cliente, CPF_VALIDO)
+        r = cliente.patch(f"/api/leads/{alvo}/status", headers=auth, json={
+            "kanban_status": "ganho", "servicos_vendidos": ["contabilidade"],
+            "tipo_contrato": "recorrente", "valor_fechamento": 50_000_000})
+        assert r.status_code == 200
+
     def test_lead_inexistente_devolve_404(self, cliente, auth):
         r = cliente.patch("/api/leads/999999/status",
                           json={"kanban_status": "contatado"}, headers=auth)

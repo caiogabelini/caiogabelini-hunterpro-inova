@@ -91,6 +91,24 @@ def login(
     novo — pra ver o 429 o atacante precisa ter causado ele mesmo as falhas
     naquele e-mail, o que não diz nada sobre o e-mail existir.
     """
+    # ⚠️ Null byte barrado ANTES de chegar no banco.
+    #
+    # A auditoria de 31/08/2026 mandou `{"email": "admin@x\u0000"}` e recebeu
+    # **500**: o psycopg2 recusa NUL em literal de string
+    # ("A string literal cannot contain NUL (0x00) characters") e a exceção
+    # subia sem tratamento — numa rota PÚBLICA, a única que existe sem
+    # autenticação.
+    #
+    # Vira o mesmo 401 genérico de qualquer credencial errada, e não um 422:
+    # e-mail com NUL não existe no banco, então a resposta honesta é a mesma
+    # de um e-mail que não existe. Um 422 aqui diria ao atacante que ele
+    # encontrou um caminho diferente dos outros — informação de graça.
+    if "\x00" in dados.email or "\x00" in dados.senha:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="E-mail ou senha inválidos",
+        )
+
     if esta_bloqueado(dados.email, redis_client):
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,

@@ -452,3 +452,82 @@ class TestSelecaoDoScriptDeTesteReal:
 
     def test_ranking_vazio(self) -> None:
         assert self._selecionar([], 3) == []
+
+
+class EvolutionPorNumero:
+    """Evolution falsa que responde por número e registra o que foi consultado."""
+
+    def __init__(self, com_whatsapp: set[str], status: int = 200):
+        self.com_whatsapp, self.status, self.consultados = com_whatsapp, status, []
+
+    def post(self, *a, **k):
+        numero = k["json"]["numbers"][0]
+        self.consultados.append(numero)
+        corpo = [{"exists": numero in self.com_whatsapp, "jid": f"{numero}@s.whatsapp.net"}]
+        return httpx.Response(
+            self.status, json=corpo, request=httpx.Request("POST", "http://x")
+        )
+
+
+class TestWhatsappVariosTelefones:
+    """Antes só `telefones[0]` era testado: um segundo celular ativo era ignorado."""
+
+    CPF = "00628195931"  # amostra com 5 telefones
+
+    def _rodar(self, evolution):
+        return enriquecer_lead(
+            candidato(self.CPF),
+            cliente_api_full=Fake(carregar_amostra(self.CPF)),
+            cliente_evolution=evolution,
+            resolver_mx=lambda d, *a, **k: True,
+        )
+
+    def _fila(self) -> list[str]:
+        """A fila de telefones do lead, já no formato que a Evolution recebe."""
+        lead = self._rodar(EvolutionPorNumero(set()))
+        return [whatsapp_service.formatar_numero(t) for t in lead.telefones]
+
+    def test_a_amostra_tem_ao_menos_tres_telefones(self) -> None:
+        assert len(self._fila()) >= 3
+
+    def test_segundo_telefone_com_whatsapp_confirma_o_lead(self) -> None:
+        fila = self._fila()
+        evolution = EvolutionPorNumero({fila[1]})
+        lead = self._rodar(evolution)
+        assert lead.tem_whatsapp
+        assert lead.whatsapp_numero == fila[1]
+        assert evolution.consultados == fila[:2]  # parou no segundo
+
+    def test_primeiro_com_whatsapp_nao_consulta_os_demais(self) -> None:
+        fila = self._fila()
+        evolution = EvolutionPorNumero({fila[0]})
+        lead = self._rodar(evolution)
+        assert lead.tem_whatsapp and lead.whatsapp_numero == fila[0]
+        assert evolution.consultados == [fila[0]]
+
+    def test_limite_de_tres_consultas_por_lead(self) -> None:
+        evolution = EvolutionPorNumero(set())
+        lead = self._rodar(evolution)
+        assert not lead.tem_whatsapp
+        assert len(evolution.consultados) == 3
+
+    def test_sem_nenhum_confirmado_mantem_o_primeiro_como_principal(self) -> None:
+        from app.workers.busca import escolher_telefones
+
+        fila = self._fila()
+        lead = self._rodar(EvolutionPorNumero(set()))
+        principal, _ = escolher_telefones(lead)
+        assert principal == fila[0]
+
+    def test_evolution_fora_do_ar_nao_repete_a_falha(self) -> None:
+        evolution = EvolutionPorNumero(set(), status=500)
+        lead = self._rodar(evolution)
+        assert not lead.tem_whatsapp
+        assert len(evolution.consultados) == 1
+        assert any("500" in e["motivo"] for e in lead.etapas_puladas)
+
+    def test_confirmar_o_segundo_sobe_o_score_em_15(self) -> None:
+        fila = self._fila()
+        sem = self._rodar(EvolutionPorNumero(set()))
+        com = self._rodar(EvolutionPorNumero({fila[1]}))
+        assert com.score - sem.score == 15

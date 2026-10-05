@@ -88,6 +88,8 @@ logger = logging.getLogger(__name__)
 ETAPA_DECISOR = "enrich_decisor"
 ETAPA_SITE = "enrich_site_firecrawl"
 ETAPA_WHATSAPP = "validate_whatsapp"
+#: Quantos telefones do lead a etapa de WhatsApp testa, no máximo.
+MAX_TELEFONES_WHATSAPP = 3
 ETAPA_EMAIL = "enrich_email"
 ETAPA_IA = "enrich_presenca_digital"
 
@@ -515,20 +517,37 @@ def enriquecer_lead(
     else:
         # `telefones` chega ordenado por preferência (ver LeadEnriquecido),
         # então [0] é o melhor candidato: WhatsApp do site > celular > fixo.
-        # ⚠️ Não trocar por outro índice sem revisitar `telefones_ordenados`.
-        numero_alvo = telefones[0]
-        resultado_wpp = _rodar_etapa(
-            ETAPA_WHATSAPP,
-            lambda: whatsapp_service.validar_whatsapp(
-                numero_alvo, cliente=cliente_evolution
-            ),
-            puladas,
-        )
-        if resultado_wpp is not None:
-            tem_whatsapp = resultado_wpp.tem_whatsapp
-            numero_whatsapp = resultado_wpp.numero_formatado
+        # ⚠️ Não trocar a ordem sem revisitar `telefones_ordenados`.
+        #
+        # Testa os números EM ORDEM e para no primeiro com WhatsApp, até
+        # MAX_TELEFONES_WHATSAPP. Antes só `telefones[0]` era testado: se ele
+        # não tivesse WhatsApp (chip antigo, número que o titular não usa) o
+        # lead ficava "não confirmado" e perdia os 15 pontos, mesmo com um
+        # segundo celular ativo. Custa só consulta à Evolution (self-hosted);
+        # os telefones já vieram pagos da API Full.
+        for numero_alvo in telefones[:MAX_TELEFONES_WHATSAPP]:
+            resultado_wpp = _rodar_etapa(
+                ETAPA_WHATSAPP,
+                lambda numero_alvo=numero_alvo: whatsapp_service.validar_whatsapp(
+                    numero_alvo, cliente=cliente_evolution
+                ),
+                puladas,
+            )
+            if resultado_wpp is None:
+                break  # a própria etapa falhou: não insistir nos demais
+            if not numero_whatsapp:
+                # Sem nenhum confirmado, fica o formato do primeiro número —
+                # o mesmo comportamento de antes (ver `escolher_telefones`).
+                numero_whatsapp = resultado_wpp.numero_formatado
             if resultado_wpp.erro:
                 puladas.append({"etapa": ETAPA_WHATSAPP, "motivo": resultado_wpp.erro})
+                if resultado_wpp.numero_valido:
+                    break  # Evolution fora do ar: não repetir a falha 3 vezes
+                continue  # número inválido: nenhuma consulta foi feita, tenta o próximo
+            if resultado_wpp.tem_whatsapp:
+                tem_whatsapp = True
+                numero_whatsapp = resultado_wpp.numero_formatado
+                break
 
     # --- 4. E-mail (Hunter → MX → ZeroBounce) -----------------------------
     email_aprovado = False

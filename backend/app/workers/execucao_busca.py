@@ -54,6 +54,8 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
+from sqlalchemy import select
+
 from app.core.config import settings
 from app.core.segredos import erro_redigido, traceback_redigido
 from app.core.tempo import agora_utc
@@ -160,8 +162,14 @@ def executar_busca_completa(
 
         # --- 1. Sementes + pré-seleção (grátis) ---------------------------
         try:
+            # Quem já é lead (qualquer etapa do Kanban) não volta: a busca
+            # mensal só traz gente nova e não repaga enriquecimento.
+            from app.models.lead import Lead
+
+            ja_entregues = set(sessao.execute(select(Lead.documento)).scalars().all())
             resultado = buscar(
-                dir_sicor=dir_sicor, dir_rfb=dir_rfb, anos=list(anos), uf=uf
+                dir_sicor=dir_sicor, dir_rfb=dir_rfb, anos=list(anos), uf=uf,
+                excluir_documentos=ja_entregues,
             )
         except Exception as exc:  # noqa: BLE001 — nada pode vazar pro worker
             logger.error(

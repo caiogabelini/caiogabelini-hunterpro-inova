@@ -329,12 +329,22 @@ def pre_selecionar(
     *,
     cota: int,
     culturas_alvo: Collection[str] | None = None,
+    excluir_documentos: Collection[str] = (),
 ) -> ResultadoPreSelecao:
     """Executa as 2 fases e devolve os candidatos que passaram no corte.
 
     ``cota <= 0`` significa **sem cota** (processa tudo) — a convenção de
     "desligar libera, não bloqueia" da seção 5.
+
+    ``excluir_documentos``: documentos que já viraram lead em buscas
+    anteriores. Saem das DUAS populações antes de qualquer corte, para que a
+    cota seja preenchida só com gente nova — sem isso, a busca mensal
+    reenriqueceria (e repagaria) os mesmos produtores de melhor score.
     """
+    excluir = frozenset(excluir_documentos)
+    if excluir:
+        leads_sicor = [l for l in leads_sicor if l.documento not in excluir]
+
     # --- FASE 1 — população Sicor -----------------------------------------
     candidatos_1 = ordenar_candidatos_fase1(
         [candidato_de_lead_sicor(l, culturas_alvo=culturas_alvo) for l in leads_sicor]
@@ -363,7 +373,9 @@ def pre_selecionar(
     # sobreposição entre as populações, independente da cota.
     documentos_fase1 = {c.documento for c in candidatos_1}
     candidatos_2_brutos = [
-        candidato_de_estabelecimento_rfb(e) for e in estabelecimentos_rfb
+        c
+        for c in (candidato_de_estabelecimento_rfb(e) for e in estabelecimentos_rfb)
+        if c.documento not in excluir
     ]
     candidatos_2 = [c for c in candidatos_2_brutos if c.documento not in documentos_fase1]
     descartados = len(candidatos_2_brutos) - len(candidatos_2)

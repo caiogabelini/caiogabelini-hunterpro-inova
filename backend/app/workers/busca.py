@@ -121,6 +121,7 @@ def executar_busca_mensal(
     culturas_alvo: Collection[str] | None = None,
     cota: int | None = None,
     cache_municipios: CacheMunicipios | None = None,
+    excluir_documentos: Collection[str] = (),
 ) -> ResultadoBusca:
     """Lê as duas sementes, pré-seleciona em 2 fases e para antes do custo.
 
@@ -172,6 +173,7 @@ def executar_busca_mensal(
         resultado_rfb.estabelecimentos,
         cota=cota,
         culturas_alvo=culturas_alvo,
+        excluir_documentos=excluir_documentos,
     )
     logger.info(
         "busca: pré-seleção -> %d selecionados (fase 1: %d, fase 2: %d, "

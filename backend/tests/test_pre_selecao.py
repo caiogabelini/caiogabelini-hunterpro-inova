@@ -563,3 +563,28 @@ class TestDesempatePorMes:
         primeira = [c.documento for c in ordenar_candidatos_fase1(leads)]
         segunda = [c.documento for c in ordenar_candidatos_fase1(list(reversed(leads)))]
         assert primeira == segunda
+
+
+class TestExcluirDocumentosJaEntregues:
+    """A busca mensal não pode repetir quem já virou lead (e repagar)."""
+
+    def test_documento_excluido_nao_ocupa_a_cota(self) -> None:
+        leads = [lead_sicor(f"{CPF_BASE}{i}", area=1000.0 - i) for i in range(5)]
+        ja_entregues = {leads[0].documento, leads[1].documento}
+        r = pre_selecionar(leads, [], cota=3, excluir_documentos=ja_entregues)
+        docs = {c.documento for c in r.selecionados}
+        assert docs == {leads[2].documento, leads[3].documento, leads[4].documento}
+        assert r.disponiveis_fase1 == 3
+
+    def test_sem_exclusao_comportamento_inalterado(self) -> None:
+        leads = [lead_sicor(f"{CPF_BASE}{i}") for i in range(3)]
+        a = pre_selecionar(leads, [], cota=2)
+        b = pre_selecionar(leads, [], cota=2, excluir_documentos=())
+        assert a.selecionados == b.selecionados
+
+    def test_excluido_tambem_nao_volta_pela_fase_2(self) -> None:
+        cnpj = "11222333000181"
+        r = pre_selecionar(
+            [], [estab_rfb(cnpj)], cota=5, excluir_documentos={cnpj}
+        )
+        assert r.selecionados == ()

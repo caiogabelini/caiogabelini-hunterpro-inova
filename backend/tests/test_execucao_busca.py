@@ -389,6 +389,38 @@ class TestKanbanSobreviveARebusca:
         assert lead.valor_fechamento is None
 
 
+class TestExclusaoDeLeadsJaEntregues:
+    def test_busca_recebe_os_documentos_que_ja_sao_lead(self, sessao_factory):
+        from app.workers.busca import persistir_leads
+
+        class Minimo:
+            def __init__(self, c):
+                self.candidato = c
+                self.score = 55
+                self.prioridade = "MEDIA"
+                self.etapas_puladas = ()
+
+            def __getattr__(self, _):
+                return None
+
+        sessao = sessao_factory()
+        try:
+            persistir_leads(sessao, [Minimo(CandidatoFake(CPF_VALIDO))])
+            sessao.commit()
+        except Exception:
+            sessao.rollback()
+            raise
+
+        recebido = {}
+
+        def buscar(**kw):
+            recebido.update(kw)
+            return ResultadoBuscaFake(selecionados=())
+
+        rodar(sessao_factory, buscar=buscar)
+        assert CPF_VALIDO in recebido["excluir_documentos"]
+
+
 class TestWiringReal:
     """Os testes acima injetam ``buscar``. Este NÃO injeta — usa o
     ``executar_busca_mensal`` de verdade, pra provar que o caminho padrão
